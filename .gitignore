@@ -1,0 +1,6 @@
+.worktrees/
+config/sim_account.yaml
+logs/
+.pytest_cache/
+__pycache__/
+*.pyc
