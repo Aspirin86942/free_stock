@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gmtrade-live"
+version = "0.1.0"
+description = "东方财富掘金第一期最小实盘闭环"
+readme = "docs/Proposal/量化交易系统规划书.md"
+requires-python = ">=3.10,<3.11"
+dependencies = [
+  "PyYAML>=6.0.2,<7.0.0",
+  "gm==3.0.183",
+  "gmtrade==3.0.6",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "."]
+testpaths = ["tests"]
+addopts = "-ra"
