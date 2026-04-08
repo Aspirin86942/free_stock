@@ -17,10 +17,8 @@ class GMTradeQueryGateway:
 
     def connect(self, config: AppConfig) -> None:
         self._api.set_token(config.token)
-        if hasattr(self._api, "set_serv_addr"):
+        if hasattr(self._api, "set_serv_addr") and config.gmtrade_endpoint:
             self._api.set_serv_addr(config.gmtrade_endpoint)
-        if hasattr(self._api, "set_account_id"):
-            self._api.set_account_id(config.account_id)
 
     def get_cash(self, account_id: str) -> CashSnapshot:
         raw = self._api.get_cash(account_id=account_id)
@@ -38,10 +36,7 @@ class GMTradeQueryGateway:
             available_cash=normalize_amount(_pick(raw, "available", "balance")),
             market_value=normalize_amount(_pick(raw, "market_value", "market_value_long")),
             total_asset=normalize_amount(_pick(raw, "nav", "balance")),
-            update_time=_as_datetime(
-                _pick(raw, "updated_at", "created_at"),
-                field_name="updated_at",
-            ),
+            update_time=_as_datetime_or_now(raw, field_name="updated_at"),
         )
 
     def get_positions(self, account_id: str) -> list[PositionSnapshot]:
@@ -60,10 +55,7 @@ class GMTradeQueryGateway:
                     volume=volume,
                     available_volume=available_volume,
                     cost_price=normalize_price(cost_per_share),
-                    last_update_time=_as_datetime(
-                        _pick(row, "updated_at", "created_at"),
-                        field_name="updated_at",
-                    ),
+                    last_update_time=_as_datetime_or_now(row, field_name="updated_at"),
                 )
             )
         return results
@@ -115,3 +107,17 @@ def _as_datetime(value: Any, *, field_name: str) -> datetime:
         retryable=True,
         context={"field": field_name, "value": str(value)},
     )
+
+
+def _as_datetime_or_now(payload: dict[str, Any], *, field_name: str) -> datetime:
+    """尝试从 payload 提取时间字段，如果不存在则返回当前时间"""
+    from zoneinfo import ZoneInfo
+
+    for key in ("updated_at", "created_at"):
+        if key in payload and payload[key] is not None:
+            value = payload[key]
+            if isinstance(value, datetime):
+                return value
+
+    # gm.api 返回的数据可能没有时间字段，使用当前时间
+    return datetime.now(tz=ZoneInfo("Asia/Shanghai"))
