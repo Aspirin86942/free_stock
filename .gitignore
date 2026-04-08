@@ -1,9 +1,36 @@
+# Git worktrees
 .worktrees/
+
+# Claude Code
+.claude/
+
+# 敏感配置
 config/sim_account.yaml
+
+# 运行时产物
 logs/
+
+# Python
 .pytest_cache/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.Python
+
+# 构建产物
 *.egg-info/
 build/
 dist/
+*.egg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 操作系统
+.DS_Store
+Thumbs.db

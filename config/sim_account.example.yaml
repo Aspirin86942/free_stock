@@ -8,4 +8,4 @@ trade_session_start: "09:30:00"
 trade_session_end: "15:00:00"
 log_dir: logs
 timezone: Asia/Shanghai
-gmtrade_endpoint: api.myquant.cn:9000
+gmtrade_endpoint: 127.0.0.1:7001
