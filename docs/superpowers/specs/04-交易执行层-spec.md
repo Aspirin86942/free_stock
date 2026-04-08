@@ -89,6 +89,67 @@
 - `filled` 状态下不允许再次对同一批已卖完持仓发起执行
 - 一个标的的执行状态不能覆盖另一个标的
 
+### 7.1 原子操作：检查并提交
+
+为了避免竞态条件，检查状态和提交订单必须是**原子操作**：
+
+```python
+def submit_sell_order(
+    symbol: str,
+    volume: int,
+    state_manager: PositionStateManager,
+    gateway: TradeGateway
+) -> bool:
+    """原子操作：检查状态并提交订单"""
+    
+    # 1. 再次检查是否有未完成订单（最后一道防护）
+    if state_manager.has_open_order(symbol):
+        logger.warning(f"duplicate_order_blocked symbol={symbol}")
+        return False
+    
+    # 2. 立即标记为 submitting，防止重复
+    state_manager.update_state(symbol, PositionState.submitting)
+    
+    # 3. 提交订单
+    try:
+        result = gateway.submit_order(symbol, volume)
+        
+        if result.accepted:
+            # 4. 更新为 submitted
+            state_manager.update_state(
+                symbol,
+                PositionState.submitted,
+                order_id=result.order_id
+            )
+            return True
+        else:
+            # 5. 提交失败，更新为 failed
+            state_manager.update_state(
+                symbol,
+                PositionState.failed,
+                message=result.message
+            )
+            return False
+    
+    except Exception as e:
+        # 6. 异常，更新为 failed
+        state_manager.update_state(
+            symbol,
+            PositionState.failed,
+            message=str(e)
+        )
+        logger.error(f"order_submit_error symbol={symbol} error={e}", exc_info=True)
+        return False
+```
+
+### 7.2 为什么需要"再次检查"
+
+虽然核心决策层已经检查过状态，但交易执行层仍需要**再次检查**，原因：
+
+1. **防御性编程** - 即使上游逻辑有 bug，也不会导致重复发单
+2. **时间窗口** - 从决策到执行之间可能收到回报，状态已变化
+3. **最后一道防护** - 交易执行层是最接近外部接口的层，必须保证安全
+
 ## 8. 状态收口规则
 
 建议最小执行状态如下：

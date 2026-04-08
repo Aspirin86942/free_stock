@@ -154,6 +154,96 @@
 - 无法识别的回报状态必须落错误日志
 - 回报不能直接改写上层业务状态，只能输出事件
 
+#### 6.5.1 回报处理机制
+
+第一期采用**回调函数 + 事件队列**模式：
+
+1. 注册掘金 SDK 的回调函数
+2. 回调函数将回报事件放入内部队列
+3. 主循环从队列中取出事件并处理
+
+**回调函数职责：**
+
+- 接收原始回报对象
+- 转换为内部事件对象
+- 放入事件队列
+
+**回调函数禁止：**
+
+- 直接更新状态
+- 执行业务逻辑
+- 调用其他接口
+- 阻塞等待
+
+**示例代码：**
+
+```python
+from queue import Queue
+
+# 全局事件队列
+callback_queue: Queue = Queue()
+
+def on_order_status(order):
+    """委托状态变化回调"""
+    try:
+        event = OrderStatusEvent.from_gmtrade(order)
+        callback_queue.put(event)
+    except Exception as e:
+        logger.error(f"回调函数异常: {e}", exc_info=True)
+
+def on_execution_report(execution):
+    """成交回报回调"""
+    try:
+        event = ExecutionEvent.from_gmtrade(execution)
+        callback_queue.put(event)
+    except Exception as e:
+        logger.error(f"回调函数异常: {e}", exc_info=True)
+
+# 注册回调
+gmtrade.api.set_order_callback(on_order_status)
+gmtrade.api.set_execution_callback(on_execution_report)
+
+# 主循环处理
+while True:
+    # 1. 处理所有回报
+    while not callback_queue.empty():
+        event = callback_queue.get()
+        handle_callback_event(event)
+    
+    # 2. 执行判断和发单
+    execute_one_round()
+    
+    time.sleep(5)
+```
+
+#### 6.5.2 回报事件类型
+
+定义两种内部事件：
+
+**OrderStatusEvent（委托状态事件）：**
+
+```python
+@dataclass
+class OrderStatusEvent:
+    order_id: str
+    symbol: str
+    status: str  # new/submitted/partial_filled/filled/cancelled/rejected
+    event_time: datetime
+    message: str
+```
+
+**ExecutionEvent（成交事件）：**
+
+```python
+@dataclass
+class ExecutionEvent:
+    order_id: str
+    symbol: str
+    filled_volume: int
+    avg_price: Decimal
+    event_time: datetime
+```
+
 ## 7. 数据契约
 
 ### 7.1 账户快照
@@ -219,6 +309,51 @@
 | `remaining_volume` | 剩余数量 |
 | `avg_price` | 成交均价 |
 | `event_time` | 回报时间 |
+
+### 7.7 数据精度约定
+
+所有从外部接口读取的数据，必须在数据接入层统一转换为以下精度：
+
+| 字段类型 | 精度 | 说明 |
+|---------|------|------|
+| 价格 | 3 位小数 | A 股最小变动 0.01 元，保留 3 位用于计算 |
+| 金额 | 2 位小数 | 资金、市值等 |
+| 数量 | 整数 | 股数，不是手数（100 股 = 1 手） |
+| 比例 | 4 位小数 | 止盈止损比例，如 0.0500 表示 5% |
+
+**精度转换函数：**
+
+```python
+from decimal import Decimal, ROUND_HALF_UP
+
+def normalize_price(value: float | Decimal) -> Decimal:
+    """标准化价格为 3 位小数"""
+    return Decimal(str(value)).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
+
+def normalize_amount(value: float | Decimal) -> Decimal:
+    """标准化金额为 2 位小数"""
+    return Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+def normalize_ratio(value: float | Decimal) -> Decimal:
+    """标准化比例为 4 位小数"""
+    return Decimal(str(value)).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+```
+
+**使用示例：**
+
+```python
+# 从掘金读取的原始数据
+raw_price = 10.123456  # float
+raw_cost = 1000.5678   # float
+
+# 转换为标准精度
+price = normalize_price(raw_price)    # Decimal("10.123")
+cost = normalize_amount(raw_cost)     # Decimal("1000.57")
+
+# 计算止盈阈值
+take_profit_ratio = normalize_ratio(0.05)  # Decimal("0.0500")
+threshold = normalize_price(cost * (Decimal("1") + take_profit_ratio))
+```
 
 ## 8. 错误处理策略
 

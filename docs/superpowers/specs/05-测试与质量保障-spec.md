@@ -144,9 +144,178 @@
 
 ### 7.3 数据要求
 
-- 持仓测试数据必须覆盖“无持仓、单标的、多标的、可卖数量为零”四类情况
-- 回报测试数据必须覆盖“已报、部成、已成、已撤、失败”五类状态
-- 错误测试数据必须覆盖“鉴权失败、行情失败、委托失败、回报异常”四类情况
+- 持仓测试数据必须覆盖”无持仓、单标的、多标的、可卖数量为零”四类情况
+- 回报测试数据必须覆盖”已报、部成、已成、已撤、失败”五类状态
+- 错误测试数据必须覆盖”鉴权失败、行情失败、委托失败、回报异常”四类情况
+
+### 7.4 测试数据管理
+
+#### 7.4.1 单元测试和集成测试
+
+使用**测试桩（Test Stub）**模拟外部接口：
+
+```python
+# tests/fixtures/fake_gateways.py
+
+from decimal import Decimal
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+class FakeTradeGateway:
+    “””模拟交易网关”””
+    
+    def __init__(self, scenario: str = “normal”):
+        self.scenario = scenario
+        self.submitted_orders = []
+    
+    def get_positions(self, account_id: str) -> list[PositionSnapshot]:
+        if self.scenario == “no_position”:
+            return []
+        elif self.scenario == “single_position”:
+            return [self._make_position(“SHSE.600036”, 100, Decimal(“10.00”))]
+        elif self.scenario == “multiple_positions”:
+            return [
+                self._make_position(“SHSE.600036”, 100, Decimal(“10.00”)),
+                self._make_position(“SHSE.600000”, 200, Decimal(“8.50”)),
+            ]
+        elif self.scenario == “zero_available”:
+            return [self._make_position(“SHSE.600036”, 100, Decimal(“10.00”), available=0)]
+        return []
+    
+    def _make_position(
+        self,
+        symbol: str,
+        volume: int,
+        cost_price: Decimal,
+        available: int | None = None
+    ) -> PositionSnapshot:
+        return PositionSnapshot(
+            symbol=symbol,
+            exchange=symbol.split(“.”)[0],
+            volume=volume,
+            available_volume=available if available is not None else volume,
+            cost_price=cost_price,
+            last_update_time=datetime.now(tz=ZoneInfo(“Asia/Shanghai”))
+        )
+    
+    def submit_order(self, symbol: str, volume: int) -> OrderSubmitResult:
+        if self.scenario == “submit_fail”:
+            return OrderSubmitResult(
+                accepted=False,
+                order_id=None,
+                symbol=symbol,
+                message=”模拟提交失败”
+            )
+        
+        order_id = f”ORDER_{len(self.submitted_orders) + 1}”
+        self.submitted_orders.append((symbol, volume, order_id))
+        
+        return OrderSubmitResult(
+            accepted=True,
+            order_id=order_id,
+            symbol=symbol,
+            message=”模拟提交成功”
+        )
+
+
+class FakeMarketGateway:
+    “””模拟行情网关”””
+    
+    def __init__(self, price_map: dict[str, Decimal] | None = None):
+        self.price_map = price_map or {}
+    
+    def get_quotes(self, symbols: list[str]) -> list[QuoteSnapshot]:
+        results = []
+        for symbol in symbols:
+            price = self.price_map.get(symbol, Decimal(“10.00”))
+            results.append(QuoteSnapshot(
+                symbol=symbol,
+                last_price=price,
+                quote_time=datetime.now(tz=ZoneInfo(“Asia/Shanghai”)),
+                source=”fake”
+            ))
+        return results
+```
+
+**使用示例：**
+
+```python
+# tests/unit/test_decision.py
+
+def test_take_profit_triggered():
+    “””测试止盈触发”””
+    # 准备测试数据
+    trade_gateway = FakeTradeGateway(scenario=”single_position”)
+    market_gateway = FakeMarketGateway(price_map={
+        “SHSE.600036”: Decimal(“10.52”)  # 成本 10.00，涨幅 5.2%
+    })
+    
+    # 执行决策
+    decision = make_decision(
+        trade_gateway=trade_gateway,
+        market_gateway=market_gateway,
+        take_profit_ratio=Decimal(“0.05”)  # 5%
+    )
+    
+    # 验证结果
+    assert decision.triggered is True
+    assert decision.trigger_type == “take_profit”
+```
+
+#### 7.4.2 仿真冒烟验证
+
+使用**专用测试账户**：
+
+- 账户标识：`test-account-m0`（从掘金申请的仿真账户）
+- 初始资金：10 万元
+- 测试持仓：手动建仓 2-3 只股票（如 SHSE.600036、SHSE.600000）
+- 配置文件：`config/test_account.yaml`（不提交到 git）
+
+**测试前准备：**
+
+1. 确认测试账户状态正常
+2. 确认测试持仓存在且可卖数量 > 0
+3. 备份当前配置和日志目录
+
+**测试执行：**
+
+```powershell
+# 设置测试账户环境变量
+$env:GM_ACCOUNT_ID = “test-account-m0”
+$env:GM_TOKEN = Read-Host “GM_TOKEN”
+
+# 运行冒烟测试
+conda run -n test python main.py --config config/test_account.yaml
+```
+
+**测试后清理：**
+
+1. 检查是否有未完成订单（通过掘金 Web 界面或日志）
+2. 归档测试日志到 `logs/archive/test-YYYY-MM-DD/`
+3. 记录测试结果到 `docs/test-reports/`
+
+#### 7.4.3 测试数据版本管理
+
+测试桩代码提交到 git：
+
+```
+tests/
+├── fixtures/
+│   ├── __init__.py
+│   ├── fake_gateways.py      # 提交
+│   └── test_scenarios.py     # 提交
+├── unit/
+└── integration/
+```
+
+测试配置不提交到 git：
+
+```
+config/
+├── sim_account.example.yaml  # 提交（示例）
+├── sim_account.yaml          # 不提交（本地）
+└── test_account.yaml         # 不提交（本地）
+```
 
 ## 8. 质量门槛
 

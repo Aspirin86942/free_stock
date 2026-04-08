@@ -165,6 +165,35 @@
 
 第一期可以先按固定时间窗口控制，不要求先接交易日历服务，但必须保留后续替换空间。
 
+### 8.3 并发控制
+
+第一期采用**单线程顺序处理模型**，避免并发带来的竞态条件和状态不一致问题。
+
+#### 8.3.1 执行模型
+
+主循环按以下顺序执行：
+
+1. 处理所有待处理的回报事件（从回调队列中取出）
+2. 读取持仓和行情
+3. 执行决策判断
+4. 提交卖单（如果触发）
+5. 等待下一轮
+
+#### 8.3.2 约束
+
+- 回报事件通过回调函数放入队列，由主循环统一处理
+- 判断和发单在同一个线程中顺序执行
+- 禁止在回调函数中直接更新状态或执行业务逻辑
+- 禁止使用多线程并发处理业务逻辑
+
+#### 8.3.3 第二期扩展
+
+如需引入并发，必须：
+
+- 对状态管理器的读写操作加锁
+- 使用原子操作检查并更新状态
+- 明确定义事件处理的优先级和互斥规则
+
 ## 9. 日志与审计基础能力
 
 ### 9.1 日志分类
@@ -200,6 +229,42 @@
 - 每轮调度都有日志
 - 每次策略触发和下单动作能够被后续模块写入审计日志
 
+### 9.4 关键业务事件日志格式
+
+关键业务事件必须使用**结构化日志**，格式为：
+
+```
+{timestamp} {level} {strategy_name} {event_type} {key1}={value1} {key2}={value2} ...
+```
+
+示例：
+
+```
+2026-04-08 10:00:00 INFO gmtrade-live-m0 heartbeat round=123 positions=2 open_orders=0
+2026-04-08 10:00:01 INFO gmtrade-live-m0 decision_triggered symbol=SHSE.600036 trigger_type=take_profit cost_price=10.00 current_price=10.52 threshold=10.50 volume=100
+2026-04-08 10:00:02 INFO gmtrade-live-m0 order_submitted symbol=SHSE.600036 order_id=ORDER_123 volume=100 price_type=market
+2026-04-08 10:00:05 INFO gmtrade-live-m0 order_filled symbol=SHSE.600036 order_id=ORDER_123 filled_volume=100 avg_price=10.51
+```
+
+关键事件类型：
+
+- `heartbeat` - 心跳日志（每轮循环）
+- `decision_triggered` - 触发卖出信号
+- `decision_blocked` - 卖出被阻断
+- `order_submitted` - 委托已提交
+- `order_failed` - 委托失败
+- `order_filled` - 委托成交
+- `order_cancelled` - 委托撤单
+- `order_partial_filled` - 部分成交
+- `state_change` - 状态变化
+- `error` - 错误事件
+
+这种格式便于：
+
+1. 人工阅读
+2. 脚本解析（grep、awk）
+3. 导入日志分析系统（ELK、Splunk）
+
 ## 10. 异常处理策略
 
 第一期禁止静默失败。
@@ -212,6 +277,22 @@
 - 致命异常：记录错误后退出程序
 
 第一期不引入自动重启守护，但必须给后续接入外部守护留空间。
+
+### 10.1 错误分类与处理策略
+
+| 错误类型 | 是否重试 | 重试策略 | 失败后处理 |
+|---------|---------|---------|-----------|
+| 配置错误 | 否 | - | 阻止启动 |
+| 鉴权失败 | 否 | - | 阻止启动 |
+| 日志初始化失败 | 否 | - | 阻止启动 |
+| 网络超时 | 是 | 下一轮重试 | 记录日志，跳过本轮 |
+| 行情读取失败 | 是 | 下一轮重试 | 记录日志，该标的不进入判断 |
+| 持仓读取失败 | 是 | 下一轮重试 | 记录日志，跳过本轮判断 |
+| 委托提交失败 | 否 | - | 进入 failed 状态，记录日志 |
+| 回报解析失败 | 否 | - | 记录原始载荷，进入异常状态 |
+| 状态持久化失败 | 是 | 立即重试 1 次 | 记录日志，不影响主流程 |
+
+第一期不引入指数退避、熔断等复杂策略。
 
 ## 11. 本层最低验证要求
 
@@ -265,3 +346,85 @@
 - 固定调度入口
 
 这 5 项是数据接入层能够开始落地的前提。
+
+## 14. 监控与告警
+
+### 14.1 心跳日志
+
+每轮循环必须输出心跳日志：
+
+```
+2026-04-08 10:00:00 INFO gmtrade-live-m0 heartbeat round=123 positions=2 open_orders=0
+```
+
+如果心跳日志超过 2 个轮询周期未更新，说明程序可能卡死。
+
+### 14.2 健康检查文件
+
+每轮循环更新健康检查文件：
+
+```json
+{
+  "last_update": "2026-04-08T10:00:00",
+  "status": "running",
+  "round": 123,
+  "positions": 2,
+  "open_orders": 0
+}
+```
+
+文件路径：`logs/health.json`
+
+外部监控脚本可以定期检查此文件的 `last_update` 时间戳。
+
+### 14.3 告警（第二期）
+
+第二期可以考虑：
+
+- 邮件告警
+- 企业微信/钉钉告警
+- 短信告警
+
+## 15. 配置安全性
+
+### 15.1 敏感信息存储
+
+第一期使用环境变量存储敏感信息（账户 ID、Token、数据库密码等）。
+
+配置文件示例：
+
+```yaml
+account_id: ${GM_ACCOUNT_ID}
+token: ${GM_TOKEN}
+db_password: ${MYSQL_PASSWORD}
+```
+
+启动前设置环境变量：
+
+```powershell
+$env:GM_ACCOUNT_ID = Read-Host "GM_ACCOUNT_ID"
+$env:GM_TOKEN = Read-Host "GM_TOKEN" -AsSecureString | ConvertFrom-SecureString
+```
+
+### 15.2 安全风险
+
+环境变量方案存在以下风险：
+
+- 环境变量可能被其他进程读取
+- PowerShell 历史记录可能泄露敏感信息
+- 进程崩溃时环境变量可能被转储
+
+### 15.3 缓解措施
+
+1. 使用 `Read-Host` 而不是直接 `$env:VAR = "value"`
+2. 定期清理 PowerShell 历史：`Clear-History`
+3. 不在脚本中硬编码敏感信息
+4. 配置文件不提交到 git（通过 `.gitignore` 排除）
+
+### 15.4 第二期改进
+
+第二期可以考虑：
+
+- 使用 Windows Credential Manager
+- 使用配置加密（如 `cryptography` 库）
+- 使用密钥管理服务（如 Azure Key Vault、HashiCorp Vault）

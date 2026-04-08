@@ -91,6 +91,56 @@
 - 一个标的的状态变化不能影响其他标的
 - 程序重启后应至少能根据持仓和未完成委托恢复基本状态
 
+### 6.1 状态管理职责
+
+核心决策层**不直接管理状态**，而是：
+
+1. **读取状态** - 从状态管理器读取当前状态
+2. **判断条件** - 根据状态判断是否允许触发
+3. **输出建议** - 输出建议的下一个状态
+
+**状态的实际更新由交易执行层负责。**
+
+### 6.2 状态管理器
+
+系统使用统一的 `PositionStateManager` 管理所有标的的状态：
+
+```python
+class PositionStateManager:
+    """集中管理所有持仓标的的状态"""
+    
+    def get_state(self, symbol: str) -> PositionStateSnapshot:
+        """获取标的当前状态"""
+        pass
+    
+    def update_state(self, symbol: str, new_state: PositionState, **kwargs) -> None:
+        """更新标的状态"""
+        pass
+    
+    def has_open_order(self, symbol: str) -> bool:
+        """判断是否有未完成订单"""
+        pass
+```
+
+**M0-M2：** 状态存储在内存中
+
+**M3-M4：** 状态持久化到 MySQL，支持程序重启后恢复
+
+### 6.3 状态恢复策略
+
+程序重启后，状态管理器从以下来源恢复状态：
+
+**M0-M2（内存版本）：**
+
+- 状态丢失，从 `idle` 重新开始
+- 通过日志人工排查未完成订单
+
+**M3-M4（MySQL 版本）：**
+
+- 从数据库加载所有标的的最新状态
+- 检查是否有 `submitted` 或 `partially_filled` 状态的订单
+- 输出警告日志，提示人工确认
+
 ## 7. 判断规则
 
 ### 7.1 可卖持仓筛选
