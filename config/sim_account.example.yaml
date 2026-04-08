@@ -1,0 +1,11 @@
+account_id: ${GM_ACCOUNT_ID}
+token: ${GM_TOKEN}
+strategy_name: gmtrade-live-m0
+poll_interval_seconds: 5
+take_profit_ratio: "0.05"
+stop_loss_ratio: "0.03"
+trade_session_start: "09:30:00"
+trade_session_end: "15:00:00"
+log_dir: logs
+timezone: Asia/Shanghai
+gmtrade_endpoint: api.myquant.cn:9000
