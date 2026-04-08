@@ -19,19 +19,23 @@
 - Create: `src/gmtrade_live/__init__.py` - package marker.
 - Create: `src/gmtrade_live/errors.py` - unified error model.
 - Create: `src/gmtrade_live/config.py` - YAML config loading and validation.
-- Create: `src/gmtrade_live/logging_setup.py` - runtime logger bootstrap.
+- Create: `src/gmtrade_live/logging_setup.py` - runtime logger bootstrap with structured logging.
 - Create: `src/gmtrade_live/session.py` - trade-session state calculation.
 - Create: `src/gmtrade_live/models.py` - cash / position / quote / report models.
+- Create: `src/gmtrade_live/precision.py` - data precision normalization functions.
+- Create: `src/gmtrade_live/state.py` - position state manager (memory version).
 - Create: `src/gmtrade_live/gateways/__init__.py` - gateway package marker.
 - Create: `src/gmtrade_live/gateways/protocols.py` - trade and market gateway interfaces.
-- Create: `src/gmtrade_live/gateways/gmtrade_trade_gateway.py` - official `gmtrade` adapter.
-- Create: `src/gmtrade_live/gateways/gm_market_gateway.py` - official `gm.api.current` adapter.
+- Create: `src/gmtrade_live/gateways/gmtrade_trade_gateway.py` - official `gmtrade` adapter with precision normalization.
+- Create: `src/gmtrade_live/gateways/gm_market_gateway.py` - official `gm.api.current` adapter with precision normalization.
 - Create: `src/gmtrade_live/services/__init__.py` - services package marker.
 - Create: `src/gmtrade_live/services/m0_connectivity.py` - M0 application service.
-- Create: `src/gmtrade_live/bootstrap.py` - real wiring for config, logging, adapters, and service.
+- Create: `src/gmtrade_live/bootstrap.py` - real wiring for config, logging, adapters, state manager, and service.
 - Create: `tests/unit/test_main.py` - parser contract.
 - Create: `tests/unit/test_config.py` - config validation tests.
 - Create: `tests/unit/test_runtime.py` - logger and session tests.
+- Create: `tests/unit/test_precision.py` - precision normalization tests.
+- Create: `tests/unit/test_state.py` - state manager tests.
 - Create: `tests/unit/test_official_gateways.py` - adapter mapping tests with fake SDK modules.
 - Create: `tests/integration/test_m0_connectivity_service.py` - fake-driven M0 service integration test.
 
@@ -185,16 +189,18 @@ git add .gitignore pyproject.toml main.py src/gmtrade_live/__init__.py tests/uni
 git commit -m "build: bootstrap gmtrade live m0 project"
 ```
 
-### Task 2: Add Error Model, Config Loading, Logging, And Session Control
+### Task 2: Add Error Model, Config Loading, Logging, Session Control, And Data Precision
 
 **Files:**
 - Create: `src/gmtrade_live/errors.py`
 - Create: `src/gmtrade_live/config.py`
 - Create: `src/gmtrade_live/logging_setup.py`
 - Create: `src/gmtrade_live/session.py`
+- Create: `src/gmtrade_live/precision.py`
 - Create: `config/sim_account.example.yaml`
 - Test: `tests/unit/test_config.py`
 - Test: `tests/unit/test_runtime.py`
+- Test: `tests/unit/test_precision.py`
 
 - [ ] **Step 1: Write the failing config and runtime tests**
 
@@ -547,7 +553,66 @@ timezone: Asia/Shanghai
 gmtrade_endpoint: api.myquant.cn:9000
 ```
 
-- [ ] **Step 4: Run the config and runtime tests again and verify they pass**
+`src/gmtrade_live/precision.py`
+
+```python
+from __future__ import annotations
+
+from decimal import Decimal, ROUND_HALF_UP
+
+
+def normalize_price(value: float | Decimal) -> Decimal:
+    """标准化价格为 3 位小数（A 股最小变动 0.01 元）"""
+    return Decimal(str(value)).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
+
+
+def normalize_amount(value: float | Decimal) -> Decimal:
+    """标准化金额为 2 位小数"""
+    return Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def normalize_ratio(value: float | Decimal) -> Decimal:
+    """标准化比例为 4 位小数（如 0.0500 表示 5%）"""
+    return Decimal(str(value)).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+```
+
+`tests/unit/test_precision.py`
+
+```python
+from decimal import Decimal
+
+from gmtrade_live.precision import normalize_amount, normalize_price, normalize_ratio
+
+
+def test_normalize_price_rounds_to_three_decimals() -> None:
+    assert normalize_price(10.123456) == Decimal("10.123")
+    assert normalize_price(10.1235) == Decimal("10.124")  # 四舍五入
+    assert normalize_price(Decimal("10.123456")) == Decimal("10.123")
+
+
+def test_normalize_amount_rounds_to_two_decimals() -> None:
+    assert normalize_amount(1000.5678) == Decimal("1000.57")
+    assert normalize_amount(1000.565) == Decimal("1000.57")  # 四舍五入
+    assert normalize_amount(Decimal("1000.5678")) == Decimal("1000.57")
+
+
+def test_normalize_ratio_rounds_to_four_decimals() -> None:
+    assert normalize_ratio(0.05) == Decimal("0.0500")
+    assert normalize_ratio(0.123456) == Decimal("0.1235")
+    assert normalize_ratio(Decimal("0.123456")) == Decimal("0.1235")
+```
+
+- [ ] **Step 4: Run the precision tests and verify they pass**
+
+Run:
+
+```powershell
+conda run -n test pytest tests/unit/test_precision.py -v
+```
+
+Expected: PASS. All precision normalization functions work correctly.
+
+- [ ] **Step 5: Run the config and runtime tests again and verify they pass**
 
 Run:
 
@@ -557,11 +622,11 @@ conda run -n test pytest tests/unit/test_config.py tests/unit/test_runtime.py -v
 
 Expected: PASS. Config parsing, environment-variable resolution, log creation, and session-state calculation are green.
 
-- [ ] **Step 5: Commit the infrastructure baseline**
+- [ ] **Step 6: Commit the infrastructure baseline**
 
 ```powershell
-git add config/sim_account.example.yaml src/gmtrade_live/errors.py src/gmtrade_live/config.py src/gmtrade_live/logging_setup.py src/gmtrade_live/session.py tests/unit/test_config.py tests/unit/test_runtime.py
-git commit -m "feat: add config and runtime infrastructure for m0"
+git add config/sim_account.example.yaml src/gmtrade_live/errors.py src/gmtrade_live/config.py src/gmtrade_live/logging_setup.py src/gmtrade_live/session.py src/gmtrade_live/precision.py tests/unit/test_config.py tests/unit/test_runtime.py tests/unit/test_precision.py
+git commit -m "feat: add config, runtime infrastructure, and data precision normalization for m0"
 ```
 
 ### Task 3: Add Internal Models, Gateway Protocols, And The M0 Application Service
@@ -848,7 +913,204 @@ git add src/gmtrade_live/models.py src/gmtrade_live/gateways/__init__.py src/gmt
 git commit -m "feat: add m0 connectivity service core"
 ```
 
-### Task 4: Add Official GM Adapters, Real Wiring, And M0 Smoke Verification
+### Task 3.5: Add Position State Manager (Memory Version)
+
+**Files:**
+- Create: `src/gmtrade_live/state.py`
+- Test: `tests/unit/test_state.py`
+
+- [ ] **Step 1: Write the failing state manager tests**
+
+```python
+from datetime import datetime
+from decimal import Decimal
+
+from gmtrade_live.state import PositionState, PositionStateManager, PositionStateSnapshot
+
+
+def test_state_manager_returns_idle_for_new_symbol() -> None:
+    """测试新标的默认返回 idle 状态"""
+    manager = PositionStateManager(logger=None)
+    
+    snapshot = manager.get_state("SHSE.600036")
+    
+    assert snapshot.symbol == "SHSE.600036"
+    assert snapshot.state == PositionState.idle
+
+
+def test_state_manager_updates_state() -> None:
+    """测试状态更新"""
+    manager = PositionStateManager(logger=None)
+    
+    manager.update_state(
+        "SHSE.600036",
+        PositionState.triggered,
+        trigger_type="take_profit",
+        trigger_price=Decimal("10.50")
+    )
+    
+    snapshot = manager.get_state("SHSE.600036")
+    assert snapshot.state == PositionState.triggered
+    assert snapshot.trigger_type == "take_profit"
+    assert snapshot.trigger_price == Decimal("10.50")
+
+
+def test_state_manager_detects_open_orders() -> None:
+    """测试未完成订单检测"""
+    manager = PositionStateManager(logger=None)
+    
+    # 初始状态：没有未完成订单
+    assert manager.has_open_order("SHSE.600036") is False
+    
+    # 提交订单后：有未完成订单
+    manager.update_state("SHSE.600036", PositionState.submitted, order_id="ORDER_123")
+    assert manager.has_open_order("SHSE.600036") is True
+    
+    # 部分成交：仍然有未完成订单
+    manager.update_state("SHSE.600036", PositionState.partially_filled)
+    assert manager.has_open_order("SHSE.600036") is True
+    
+    # 全部成交：没有未完成订单
+    manager.update_state("SHSE.600036", PositionState.filled)
+    assert manager.has_open_order("SHSE.600036") is False
+
+
+def test_state_manager_isolates_symbols() -> None:
+    """测试多标的状态隔离"""
+    manager = PositionStateManager(logger=None)
+    
+    manager.update_state("SHSE.600036", PositionState.submitted, order_id="ORDER_1")
+    manager.update_state("SHSE.600000", PositionState.triggered)
+    
+    # 两个标的的状态互不影响
+    assert manager.get_state("SHSE.600036").state == PositionState.submitted
+    assert manager.get_state("SHSE.600000").state == PositionState.triggered
+    
+    # 一个标的有未完成订单，另一个没有
+    assert manager.has_open_order("SHSE.600036") is True
+    assert manager.has_open_order("SHSE.600000") is False
+```
+
+- [ ] **Step 2: Run the state manager tests and verify they fail**
+
+Run:
+
+```powershell
+conda run -n test pytest tests/unit/test_state.py -v
+```
+
+Expected: FAIL with `ModuleNotFoundError` for `gmtrade_live.state`.
+
+- [ ] **Step 3: Implement the position state manager**
+
+`src/gmtrade_live/state.py`
+
+```python
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime
+from decimal import Decimal
+from enum import Enum
+import logging
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from logging import Logger
+
+
+class PositionState(str, Enum):
+    """持仓标的的统一状态"""
+    idle = "idle"                          # 有持仓，未触发
+    triggered = "triggered"                # 已触发，待提交
+    submitting = "submitting"              # 正在提交
+    submitted = "submitted"                # 已提交，等待回报
+    partially_filled = "partially_filled"  # 部分成交
+    filled = "filled"                      # 全部成交
+    cancelled = "cancelled"                # 已撤单
+    failed = "failed"                      # 失败
+
+
+@dataclass
+class PositionStateSnapshot:
+    """持仓标的的状态快照"""
+    symbol: str
+    state: PositionState
+    order_id: str | None = None           # 委托编号
+    trigger_type: str | None = None       # 触发类型：take_profit / stop_loss
+    trigger_price: Decimal | None = None  # 触发价格
+    requested_volume: int = 0             # 请求卖出数量
+    filled_volume: int = 0                # 已成交数量
+    last_update_time: datetime | None = None
+    message: str = ""                     # 说明或错误原因
+
+
+class PositionStateManager:
+    """集中管理所有持仓标的的状态（内存版本）"""
+    
+    def __init__(self, logger: Logger | None):
+        self._logger = logger
+        self._cache: dict[str, PositionStateSnapshot] = {}
+    
+    def get_state(self, symbol: str) -> PositionStateSnapshot:
+        """获取标的当前状态"""
+        if symbol not in self._cache:
+            return PositionStateSnapshot(symbol=symbol, state=PositionState.idle)
+        return self._cache[symbol]
+    
+    def update_state(
+        self,
+        symbol: str,
+        new_state: PositionState,
+        **kwargs
+    ) -> None:
+        """更新标的状态"""
+        snapshot = self.get_state(symbol)
+        old_state = snapshot.state
+        
+        # 更新状态
+        snapshot.state = new_state
+        snapshot.last_update_time = datetime.now()
+        
+        # 更新其他字段
+        for key, value in kwargs.items():
+            if hasattr(snapshot, key):
+                setattr(snapshot, key, value)
+        
+        # 更新内存缓存
+        self._cache[symbol] = snapshot
+        
+        # 记录日志（结构化格式）
+        if self._logger:
+            self._logger.info(
+                f"state_change symbol={symbol} old_state={old_state.value} "
+                f"new_state={new_state.value} {' '.join(f'{k}={v}' for k, v in kwargs.items())}"
+            )
+    
+    def has_open_order(self, symbol: str) -> bool:
+        """判断是否有未完成订单"""
+        state = self.get_state(symbol).state
+        return state in [PositionState.submitted, PositionState.partially_filled]
+```
+
+- [ ] **Step 4: Run the state manager tests again and verify they pass**
+
+Run:
+
+```powershell
+conda run -n test pytest tests/unit/test_state.py -v
+```
+
+Expected: PASS. All state manager tests are green.
+
+- [ ] **Step 5: Commit the state manager**
+
+```powershell
+git add src/gmtrade_live/state.py tests/unit/test_state.py
+git commit -m "feat: add position state manager (memory version) for m0"
+```
+
+### Task 4: Add Official GM Adapters With Precision Normalization, Real Wiring, And M0 Smoke Verification
 
 **Files:**
 - Create: `src/gmtrade_live/gateways/gmtrade_trade_gateway.py`
@@ -971,9 +1233,15 @@ def test_gmtrade_gateway_connects_and_maps_query_objects() -> None:
 
     assert api.token == "demo-token"
     assert api.endpoint == "api.myquant.cn:9000"
-    assert cash.total_asset == Decimal("25000.0")
+    # 验证金额精度（2 位小数）
+    assert cash.total_asset == Decimal("25000.00")
+    assert cash.available_cash == Decimal("20000.00")
+    assert cash.market_value == Decimal("5000.00")
+    # 验证持仓数据
     assert positions[0].symbol == "SHSE.600000"
     assert positions[0].available_volume == 100
+    # 验证价格精度（3 位小数）
+    assert positions[0].cost_price == Decimal("10.000")
 
 
 def test_gm_market_gateway_reads_quotes_from_current() -> None:
@@ -985,6 +1253,9 @@ def test_gm_market_gateway_reads_quotes_from_current() -> None:
 
     assert api.token == "demo-token"
     assert quotes[0].symbol == "SHSE.600000"
+    # 验证价格精度（3 位小数）
+    assert quotes[0].last_price == Decimal("10.250")
+    assert quotes[0].source == "gm.current"
     assert quotes[0].last_price == Decimal("10.25")
     assert quotes[0].source == "gm.current"
 ```
@@ -1014,6 +1285,7 @@ from typing import Any
 from gmtrade_live.config import AppConfig
 from gmtrade_live.errors import ServiceError
 from gmtrade_live.models import CashSnapshot, PositionSnapshot
+from gmtrade_live.precision import normalize_amount, normalize_price
 
 
 class GMTradeQueryGateway:
@@ -1041,9 +1313,9 @@ class GMTradeQueryGateway:
 
         return CashSnapshot(
             account_id=str(raw["account_id"]),
-            available_cash=Decimal(str(raw["available"])),
-            market_value=Decimal(str(raw["market_value"])),
-            total_asset=Decimal(str(raw["nav"])),
+            available_cash=normalize_amount(raw["available"]),
+            market_value=normalize_amount(raw["market_value"]),
+            total_asset=normalize_amount(raw["nav"]),
             update_time=_as_datetime(raw["updated_at"]),
         )
 
@@ -1052,13 +1324,15 @@ class GMTradeQueryGateway:
         results: list[PositionSnapshot] = []
         for row in rows:
             symbol = str(row["symbol"])
+            # 持仓成本需要除以数量得到单价
+            cost_per_share = float(row["cost"]) / int(row["volume"]) if int(row["volume"]) > 0 else 0.0
             results.append(
                 PositionSnapshot(
                     symbol=symbol,
                     exchange=symbol.split(".", maxsplit=1)[0] if "." in symbol else "",
                     volume=int(row["volume"]),
                     available_volume=int(row["available"]),
-                    cost_price=Decimal(str(row["cost"])),
+                    cost_price=normalize_price(cost_per_share),
                     last_update_time=_as_datetime(row["updated_at"]),
                 )
             )
@@ -1088,6 +1362,7 @@ from typing import Any
 
 from gmtrade_live.errors import ServiceError
 from gmtrade_live.models import QuoteSnapshot
+from gmtrade_live.precision import normalize_price
 
 
 class GMCurrentQuoteGateway:
@@ -1114,7 +1389,7 @@ class GMCurrentQuoteGateway:
             results.append(
                 QuoteSnapshot(
                     symbol=str(row["symbol"]),
-                    last_price=Decimal(str(row["price"])),
+                    last_price=normalize_price(row["price"]),
                     quote_time=_as_datetime(row["created_at"]),
                     source="gm.current",
                 )
@@ -1146,6 +1421,54 @@ from zoneinfo import ZoneInfo
 from gmtrade_live.config import load_config
 from gmtrade_live.gateways.gm_market_gateway import GMCurrentQuoteGateway
 from gmtrade_live.gateways.gmtrade_trade_gateway import GMTradeQueryGateway
+from gmtrade_live.logging_setup import setup_logging
+from gmtrade_live.services.m0_connectivity import ConnectivityCheckService
+from gmtrade_live.session import resolve_trading_session
+
+
+def run_m0_connectivity_check(config_path: Path) -> int:
+    config = load_config(config_path)
+    logger = setup_logging(config.strategy_name, config.log_dir)
+
+    # 输出心跳日志（结构化格式）
+    logger.info(f"heartbeat round=1 status=starting config={config_path}")
+
+    session_state = resolve_trading_session(
+        datetime.now(tz=ZoneInfo(config.timezone)),
+        start_text=config.trade_session_start,
+        end_text=config.trade_session_end,
+        timezone_name=config.timezone,
+    )
+
+    service = ConnectivityCheckService(
+        trade_gateway=GMTradeQueryGateway(),
+        market_gateway=GMCurrentQuoteGateway(),
+        logger=logger,
+    )
+    report = service.run(config=config, session_state=session_state)
+
+    # 输出结果（JSON 格式）
+    print(
+        json.dumps(
+            {
+                "account_id": report.account_id,
+                "session_state": report.session_state,
+                "available_cash": str(report.cash.available_cash),
+                "position_count": len(report.positions),
+                "quote_count": len(report.quotes),
+            },
+            ensure_ascii=False,
+        )
+    )
+    
+    # 输出完成心跳日志
+    logger.info(
+        f"heartbeat round=1 status=completed positions={len(report.positions)} "
+        f"quotes={len(report.quotes)}"
+    )
+    
+    return 0
+```
 from gmtrade_live.logging_setup import setup_logging
 from gmtrade_live.services.m0_connectivity import ConnectivityCheckService
 from gmtrade_live.session import resolve_trading_session
@@ -1270,10 +1593,20 @@ git commit -m "feat: wire official gm adapters for m0"
 
 ### Spec coverage
 
-- 基础设施层：covered by Tasks 1-2 through CLI, config validation, logging, and session-state control.
-- 数据接入层：covered by Task 4 through official `gmtrade` / `gm` adapters.
+- 基础设施层：covered by Tasks 1-2 through CLI, config validation, structured logging with heartbeat, and session-state control.
+- 数据接入层：covered by Task 4 through official `gmtrade` / `gm` adapters with precision normalization.
+- 状态管理：covered by Task 3.5 through memory-based PositionStateManager.
+- 数据精度：covered by Task 2 through precision normalization functions (price 3 decimals, amount 2 decimals).
 - 测试与质量保障：covered by every task through TDD and by Task 4 full verification commands.
 - `M0` 完成定义：covered by Task 4 smoke run, which verifies账号连通、资金读取、持仓读取、行情读取。
+
+### New additions based on updated specs
+
+- **Data precision normalization** - All prices, amounts, and ratios are normalized to standard precision in gateways.
+- **Position state manager** - Memory-based state manager for tracking position states (idle, triggered, submitted, etc.).
+- **Structured logging** - Heartbeat logs and event logs use key=value format for easy parsing.
+- **Precision tests** - Unit tests verify that normalization functions work correctly.
+- **State manager tests** - Unit tests verify state isolation, open order detection, and state transitions.
 
 ### Placeholder scan
 
@@ -1284,3 +1617,4 @@ git commit -m "feat: wire official gm adapters for m0"
 
 - `AppConfig`, `CashSnapshot`, `PositionSnapshot`, `QuoteSnapshot`, and `ConnectivityReport` are defined before later tasks use them.
 - The gateway method names are consistent end-to-end: `connect`, `get_cash`, `get_positions`, `get_quotes`.
+- All numeric values use `Decimal` with appropriate precision (price: 3 decimals, amount: 2 decimals, ratio: 4 decimals).
