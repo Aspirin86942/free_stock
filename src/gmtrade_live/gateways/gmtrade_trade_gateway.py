@@ -13,28 +13,17 @@ from gmtrade_live.precision import normalize_amount, normalize_price
 
 class GMTradeQueryGateway:
     def __init__(self, api_module: Any | None = None) -> None:
-        self._api = api_module or _import_trade_api()
-        self._account_object: Any | None = None
+        self._api = api_module or importlib.import_module("gm.api")
 
     def connect(self, config: AppConfig) -> None:
         self._api.set_token(config.token)
-        if _supports_gmtrade_login(self._api):
-            if hasattr(self._api, "set_endpoint"):
-                self._api.set_endpoint(config.gmtrade_endpoint)
-            self._account_object = self._api.account(
-                account_id=config.account_id,
-                account_alias=config.strategy_name,
-            )
-            self._api.login(self._account_object)
-            return
-
         if hasattr(self._api, "set_serv_addr"):
             self._api.set_serv_addr(config.gmtrade_endpoint)
         if hasattr(self._api, "set_account_id"):
             self._api.set_account_id(config.account_id)
 
     def get_cash(self, account_id: str) -> CashSnapshot:
-        raw = self._get_cash_payload(account_id)
+        raw = self._api.get_cash(account_id=account_id)
         if not raw:
             raise ServiceError(
                 code="gmtrade.empty_cash",
@@ -56,7 +45,7 @@ class GMTradeQueryGateway:
         )
 
     def get_positions(self, account_id: str) -> list[PositionSnapshot]:
-        rows = self._get_positions_payload(account_id)
+        rows = self._api.get_position(account_id=account_id) or []
         results: list[PositionSnapshot] = []
         for row in rows:
             row = _coerce_record(row)
@@ -78,43 +67,6 @@ class GMTradeQueryGateway:
                 )
             )
         return results
-
-    def _get_cash_payload(self, account_id: str) -> Any:
-        if _supports_gmtrade_login(self._api):
-            try:
-                return self._api.get_cash(account=self._account_object)
-            except TypeError:
-                return self._api.get_cash(account_id=account_id)
-        return self._api.get_cash(account_id=account_id)
-
-    def _get_positions_payload(self, account_id: str) -> list[Any]:
-        if _supports_gmtrade_login(self._api) and hasattr(self._api, "get_positions"):
-            try:
-                return self._api.get_positions(account=self._account_object) or []
-            except TypeError:
-                return self._api.get_positions(account_id=account_id) or []
-        if hasattr(self._api, "get_position"):
-            return self._api.get_position(account_id=account_id) or []
-        raise ServiceError(
-            code="gmtrade.unsupported_api",
-            message="未找到可用的持仓查询接口",
-            retryable=False,
-            context={"api_module": str(self._api)},
-        )
-
-
-def _import_trade_api() -> Any:
-    try:
-        return importlib.import_module("gmtrade.api")
-    except ModuleNotFoundError:
-        return importlib.import_module("gm.api")
-
-
-def _supports_gmtrade_login(api_module: Any) -> bool:
-    return all(
-        hasattr(api_module, name)
-        for name in ("set_endpoint", "account", "login")
-    )
 
 
 def _pick(payload: dict[str, Any], *keys: str) -> Any:
