@@ -34,7 +34,9 @@ class GMTradeQueryGateway:
         return CashSnapshot(
             account_id=str(_pick(raw, "account_id")),
             available_cash=normalize_amount(_pick(raw, "available", "balance")),
-            market_value=normalize_amount(_pick(raw, "market_value", "market_value_long")),
+            market_value=normalize_amount(
+                _pick(raw, "market_value", "market_value_long")
+            ),
             total_asset=normalize_amount(_pick(raw, "nav", "balance")),
             update_time=_as_datetime_or_now(raw, field_name="updated_at"),
         )
@@ -46,7 +48,9 @@ class GMTradeQueryGateway:
             row = _coerce_record(row)
             symbol = str(_pick(row, "symbol"))
             volume = int(_pick(row, "volume"))
-            available_volume = int(_pick(row, "available", "available_now", "available_volume"))
+            available_volume = int(
+                _pick(row, "available", "available_now", "available_volume")
+            )
             cost_per_share = _resolve_cost_per_share(row, volume)
             results.append(
                 PositionSnapshot(
