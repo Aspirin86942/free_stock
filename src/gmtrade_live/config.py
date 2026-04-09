@@ -1,3 +1,5 @@
+"""配置加载与校验逻辑。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -14,11 +16,15 @@ from gmtrade_live.errors import ServiceError
 
 
 class ConfigurationError(ServiceError):
+    """配置相关错误。"""
+
     pass
 
 
 @dataclass(frozen=True, slots=True)
 class AppConfig:
+    """应用运行所需的只读配置快照。"""
+
     account_id: str
     token: str
     strategy_name: str
@@ -47,6 +53,7 @@ _REQUIRED_FIELDS = (
 
 
 def _raise(code: str, message: str, *, context: dict[str, str] | None = None) -> None:
+    """统一抛出带上下文的配置异常。"""
     raise ConfigurationError(
         code=code,
         message=message,
@@ -56,6 +63,7 @@ def _raise(code: str, message: str, *, context: dict[str, str] | None = None) ->
 
 
 def _resolve_env(value: Any, field_name: str) -> Any:
+    """解析 `${ENV_NAME}` 形式的环境变量引用。"""
     if not isinstance(value, str):
         return value
 
@@ -75,6 +83,7 @@ def _resolve_env(value: Any, field_name: str) -> Any:
 
 
 def _parse_decimal(value: Any, field_name: str) -> Decimal:
+    """把配置值解析成正 Decimal。"""
     try:
         # 后续阈值会直接参与价格计算，这里统一转成 Decimal，避免把 float 精度误差带进交易逻辑。
         result = Decimal(str(value))
@@ -95,6 +104,7 @@ def _parse_decimal(value: Any, field_name: str) -> Decimal:
 
 
 def _parse_positive_int(value: Any, field_name: str) -> int:
+    """把配置值解析成正整数。"""
     try:
         result = int(value)
     except (TypeError, ValueError):
@@ -114,6 +124,7 @@ def _parse_positive_int(value: Any, field_name: str) -> int:
 
 
 def _parse_trade_window(start_text: Any, end_text: Any) -> tuple[str, str]:
+    """校验交易时间窗口格式与先后顺序。"""
     try:
         start_value = time.fromisoformat(str(start_text))
         end_value = time.fromisoformat(str(end_text))
@@ -126,6 +137,7 @@ def _parse_trade_window(start_text: Any, end_text: Any) -> tuple[str, str]:
 
 
 def load_config(config_path: Path) -> AppConfig:
+    """读取 YAML 配置并转换为类型安全的应用配置。"""
     if not config_path.exists():
         _raise("config.not_found", "配置文件不存在", context={"path": str(config_path)})
 
@@ -149,6 +161,7 @@ def load_config(config_path: Path) -> AppConfig:
                 context={"field": field_name},
             )
 
+    # 先统一做环境变量替换，再进入类型校验，避免同一字段在多处重复解析。
     resolved = {key: _resolve_env(value, key) for key, value in raw.items()}
     trade_session_start, trade_session_end = _parse_trade_window(
         resolved["trade_session_start"],

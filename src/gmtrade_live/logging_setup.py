@@ -1,3 +1,5 @@
+"""日志初始化逻辑。"""
+
 from __future__ import annotations
 
 import logging
@@ -5,10 +7,12 @@ from pathlib import Path
 
 
 def setup_logging(strategy_name: str, log_dir: Path) -> logging.Logger:
+    """为单策略运行实例初始化文件和控制台日志。"""
     log_dir.mkdir(parents=True, exist_ok=True)
 
     logger = logging.getLogger(strategy_name)
     logger.setLevel(logging.INFO)
+    # 重复初始化时先清掉旧 handler，避免测试或重启后日志重复输出。
     logger.handlers.clear()
     logger.propagate = False
 

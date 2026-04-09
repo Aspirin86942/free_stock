@@ -1,3 +1,5 @@
+"""掘金交易网关的适配实现。"""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -25,6 +27,8 @@ if TYPE_CHECKING:
 
 
 class GMTradeQueryGateway:
+    """负责交易、查单、查成交和回调注册的统一入口。"""
+
     def __init__(
         self,
         api_module: Any | None = None,
@@ -36,6 +40,7 @@ class GMTradeQueryGateway:
         self._callback_runtime_ready = False
 
     def connect(self, config: AppConfig) -> None:
+        """绑定 token、服务地址和账户上下文。"""
         self._api.set_token(config.token)
         if hasattr(self._api, "set_serv_addr") and config.gmtrade_endpoint:
             self._api.set_serv_addr(config.gmtrade_endpoint)
@@ -43,6 +48,7 @@ class GMTradeQueryGateway:
             self._account_id = config.account_id
 
     def get_cash(self, account_id: str) -> CashSnapshot:
+        """读取账户资金并转换为内部快照。"""
         raw = self._api.get_cash(account_id=account_id)
         if not raw:
             raise ServiceError(
@@ -64,6 +70,7 @@ class GMTradeQueryGateway:
         )
 
     def get_positions(self, account_id: str) -> list[PositionSnapshot]:
+        """读取持仓列表并标准化价格、时间和可卖数量。"""
         rows = self._api.get_position(account_id=account_id) or []
         results: list[PositionSnapshot] = []
         for row in rows:
@@ -105,6 +112,7 @@ class GMTradeQueryGateway:
         self._callback_runtime_ready = True
 
     def submit_order(self, request: OrderRequest) -> OrderSubmitResult:
+        """提交卖单并把掘金原始返回转换为内部提交结果。"""
         if self._account_id is None:
             raise ServiceError(
                 code="gmtrade.missing_account_id",
@@ -162,6 +170,7 @@ class GMTradeQueryGateway:
         )
 
     def query_order_status(self, cl_ord_id: str, symbol: str) -> OrderStatusSnapshot | None:
+        """按内部委托号查单，确认最终委托状态。"""
         if self._account_id is None:
             raise ServiceError(
                 code="gmtrade.missing_account_id",
@@ -207,6 +216,7 @@ class GMTradeQueryGateway:
         )
 
     def query_execution_reports(self, cl_ord_id: str) -> tuple[OrderExecutionSnapshot, ...]:
+        """按内部委托号查询成交回报。"""
         if self._account_id is None:
             raise ServiceError(
                 code="gmtrade.missing_account_id",
@@ -239,6 +249,7 @@ class GMTradeQueryGateway:
         return tuple(snapshots)
 
     def poll_callbacks(self) -> None:
+        """仅在注册了 gm 原生回调轮询时驱动回调通道。"""
         if not self._callback_runtime_ready:
             return
         _poll_gm_callbacks()
@@ -248,6 +259,7 @@ GMTradeGateway = GMTradeQueryGateway
 
 
 def _pick(payload: dict[str, Any], *keys: str) -> Any:
+    """读取必填字段；缺失时抛出结构化错误。"""
     for key in keys:
         if key in payload and payload[key] is not None:
             return payload[key]
@@ -260,6 +272,7 @@ def _pick(payload: dict[str, Any], *keys: str) -> Any:
 
 
 def _coerce_record(value: Any) -> dict[str, Any]:
+    """把 dict、映射对象或普通对象统一转换为字典。"""
     if isinstance(value, dict):
         return value
     if hasattr(value, "items"):
@@ -275,6 +288,7 @@ def _coerce_record(value: Any) -> dict[str, Any]:
 
 
 def _resolve_cost_per_share(row: dict[str, Any], volume: int) -> Decimal:
+    """按字段优先级推导持仓成本价。"""
     if "vwap" in row and row["vwap"] is not None:
         return Decimal(str(row["vwap"]))
     if "cost" in row and row["cost"] is not None:
@@ -287,6 +301,7 @@ def _resolve_cost_per_share(row: dict[str, Any], volume: int) -> Decimal:
 
 
 def _as_datetime(value: Any, *, field_name: str) -> datetime:
+    """校验时间字段是否已被 SDK 解析为 datetime。"""
     if isinstance(value, datetime):
         return value
     raise ServiceError(
@@ -310,6 +325,7 @@ def _as_datetime_or_now(payload: dict[str, Any], *, field_name: str) -> datetime
 
 
 def _resolve_order_type(price_type: str) -> int:
+    """把内部委托类型映射到掘金常量。"""
     if price_type == "market":
         return OrderType_Market
     if price_type == "limit":
@@ -323,6 +339,7 @@ def _resolve_order_type(price_type: str) -> int:
 
 
 def _resolve_submit_price(request: OrderRequest) -> float:
+    """生成提交给 SDK 的价格字段。"""
     if request.price_type == "market":
         return 0
     if request.price is None:
@@ -336,6 +353,7 @@ def _resolve_submit_price(request: OrderRequest) -> float:
 
 
 def _extract_first_record(raw_result: Any) -> dict[str, Any]:
+    """兼容 SDK 返回单对象或单元素列表两种提交结果格式。"""
     if isinstance(raw_result, (list, tuple)):
         if not raw_result:
             raise ServiceError(
@@ -348,6 +366,7 @@ def _extract_first_record(raw_result: Any) -> dict[str, Any]:
 
 
 def _read_optional(payload: dict[str, Any], *keys: str, default: Any | None = None) -> Any:
+    """读取可选字段；缺失时返回默认值。"""
     for key in keys:
         if key in payload and payload[key] is not None:
             return payload[key]
@@ -355,6 +374,7 @@ def _read_optional(payload: dict[str, Any], *keys: str, default: Any | None = No
 
 
 def _is_submit_accepted(*, order_id: Any, raw_status: str) -> bool:
+    """根据委托号和状态码判断提交是否被柜台接受。"""
     if order_id in (None, ""):
         return False
     try:
@@ -364,6 +384,7 @@ def _is_submit_accepted(*, order_id: Any, raw_status: str) -> bool:
 
 
 def _map_order_status(status_code: int) -> str:
+    """把掘金状态码映射为内部状态文本。"""
     status_map = {
         0: "unknown",
         1: "submitted",
@@ -391,6 +412,7 @@ def _fetch_orders(
     cl_ord_id: str,
     symbol: str,
 ) -> list[dict[str, Any]]:
+    """优先调用高层 API，缺失时回退到底层 protobuf 查单。"""
     if hasattr(api_module, "get_orders_mm"):
         rows = api_module.get_orders_mm(
             symbol=symbol,
@@ -429,6 +451,7 @@ def _fetch_orders(
 
 
 def _fetch_execution_reports(*, account_id: str, cl_ord_id: str) -> list[dict[str, Any]]:
+    """通过底层 API 查询成交回报。"""
     from gm.csdk.c_sdk import c_status_fail, py_gmi_get_execution_reports
     from gm.pb.account_pb2 import ExecRpts
     from gm.pb.trade_pb2 import GetExecrptsReq
@@ -456,12 +479,14 @@ def _fetch_execution_reports(*, account_id: str, cl_ord_id: str) -> list[dict[st
 
 
 def _as_optional_str(value: Any) -> str | None:
+    """把空字符串和 None 统一收敛为 None。"""
     if value in (None, ""):
         return None
     return str(value)
 
 
 def _register_gm_callbacks(handler: CallbackHandler) -> None:
+    """在真实 gm 运行时里注册订单和成交回调。"""
     try:
         from gm.callback import callback_controller
         from gm.csdk.c_sdk import (
@@ -481,6 +506,7 @@ def _register_gm_callbacks(handler: CallbackHandler) -> None:
             context={"reason": str(exc)},
         ) from exc
 
+    # 直接把回调挂到 gm 全局 context，保证真实终端回报能进入本项目队列。
     gm_context.on_order_status_fun = handler.on_order_status
     gm_context.on_execution_report_fun = handler.on_execution_report
     gm_context.mode = MODE_LIVE
@@ -492,6 +518,7 @@ def _register_gm_callbacks(handler: CallbackHandler) -> None:
 
 
 def _poll_gm_callbacks() -> None:
+    """驱动 gm 底层回调轮询。"""
     try:
         from gm.csdk.c_sdk import gmi_poll
     except ImportError as exc:

@@ -1,3 +1,5 @@
+"""项目核心数据模型。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -7,6 +9,8 @@ from decimal import Decimal
 
 @dataclass(frozen=True, slots=True)
 class CashSnapshot:
+    """账户资金快照。"""
+
     account_id: str
     available_cash: Decimal
     market_value: Decimal
@@ -16,6 +20,8 @@ class CashSnapshot:
 
 @dataclass(frozen=True, slots=True)
 class PositionSnapshot:
+    """持仓快照。"""
+
     symbol: str
     exchange: str
     volume: int
@@ -26,6 +32,8 @@ class PositionSnapshot:
 
 @dataclass(frozen=True, slots=True)
 class QuoteSnapshot:
+    """行情快照。"""
+
     symbol: str
     last_price: Decimal
     quote_time: datetime
@@ -34,6 +42,8 @@ class QuoteSnapshot:
 
 @dataclass(frozen=True, slots=True)
 class ConnectivityReport:
+    """M0 连通性检查结果。"""
+
     account_id: str
     session_state: str
     cash: CashSnapshot

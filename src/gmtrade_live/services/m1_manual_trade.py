@@ -1,3 +1,5 @@
+"""M1 手动卖单验证服务。"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -31,6 +33,8 @@ _TERMINAL_ORDER_STATUSES = {"rejected", "cancelled", "expired", "done_for_day", 
 
 @dataclass(slots=True)
 class _CollectedEvents:
+    """聚合回调与主动查询得到的订单状态。"""
+
     order_event_received: bool = False
     execution_event_received: bool = False
     callback_chain_closed: bool = False
@@ -44,6 +48,8 @@ class _CollectedEvents:
 
 
 class ManualTradeService:
+    """负责一次 M1 手动卖单验证的完整收口。"""
+
     def __init__(
         self,
         *,
@@ -65,6 +71,7 @@ class ManualTradeService:
         price: Decimal | None,
         timeout_seconds: int,
     ) -> TradeReport:
+        """提交卖单、等待回报，并在超时前主动查单收口。"""
         self._validate_inputs(
             symbol=symbol,
             volume=volume,
@@ -153,6 +160,7 @@ class ManualTradeService:
         )
         if submit_result.broker_order_id is not None:
             collected.broker_order_id = submit_result.broker_order_id
+        # SDK 回调可能丢失，离开等待循环前再主动查一次，确保终态尽量可确认。
         if not (collected.order_event_received and collected.execution_event_received):
             self._reconcile_trade_state(
                 request=request,
@@ -232,6 +240,7 @@ class ManualTradeService:
         deadline: datetime,
         timezone_name: str,
     ) -> _CollectedEvents:
+        """等待订单回报，并定期主动查询作为兜底。"""
         collected = _CollectedEvents()
         next_reconcile_at = self._now(timezone_name)
 
@@ -248,6 +257,7 @@ class ManualTradeService:
                 if not hasattr(event, "order_id"):
                     self._logger.warning("unknown_trade_event event_type=%s", type(event).__name__)
                     continue
+                # 队列里可能混入其他历史订单事件，必须按 cl_ord_id 严格过滤。
                 if event.order_id != submit_result.cl_ord_id:
                     self._logger.info(
                         "trade_event_ignored expected_order_id=%s actual_order_id=%s",
@@ -300,6 +310,7 @@ class ManualTradeService:
         submit_result: OrderSubmitResult,
         collected: _CollectedEvents,
     ) -> None:
+        """用主动查询结果补齐回调缺失的委托和成交状态。"""
         if submit_result.cl_ord_id is None:
             return
 
@@ -310,6 +321,7 @@ class ManualTradeService:
         if order_snapshot is not None:
             self._apply_order_snapshot(collected=collected, snapshot=order_snapshot)
 
+        # 只有出现成交相关状态时才查成交，避免对拒单、撤单做无意义查询。
         if collected.last_order_status in {"filled", "partially_filled"}:
             execution_snapshots = self._trade_gateway.query_execution_reports(
                 submit_result.cl_ord_id
@@ -326,6 +338,7 @@ class ManualTradeService:
         collected: _CollectedEvents,
         snapshot: OrderStatusSnapshot,
     ) -> None:
+        """把查单结果并入当前聚合状态。"""
         collected.order_status_confirmed = True
         collected.last_order_status = snapshot.status
         collected.rejection_reason = snapshot.rejection_reason
@@ -345,6 +358,7 @@ class ManualTradeService:
         collected: _CollectedEvents,
         snapshots: tuple[OrderExecutionSnapshot, ...],
     ) -> None:
+        """把成交查询结果并入当前聚合状态。"""
         collected.execution_status_confirmed = True
         collected.filled_volume = sum(snapshot.filled_volume for snapshot in snapshots)
         collected.avg_price = snapshots[-1].avg_price
@@ -371,6 +385,7 @@ class ManualTradeService:
         started_at: datetime,
         finished_at: datetime,
     ) -> TradeReport:
+        """把运行时聚合状态整理为对外报告。"""
         return TradeReport(
             account_id=config.account_id,
             symbol=request.symbol,
@@ -407,6 +422,7 @@ class ManualTradeService:
         price: Decimal | None,
         timeout_seconds: int,
     ) -> None:
+        """校验 M1 请求参数，避免把非法请求送到柜台。"""
         if not symbol:
             raise ServiceError(
                 code="manual_trade.invalid_symbol",
@@ -454,6 +470,7 @@ class ManualTradeService:
 
 
 def _timeout_message(collected: _CollectedEvents) -> str:
+    """根据缺失的回调类型生成超时原因。"""
     if not collected.order_event_received and not collected.execution_event_received:
         return "missing_both_events"
     if not collected.order_event_received:
@@ -462,6 +479,7 @@ def _timeout_message(collected: _CollectedEvents) -> str:
 
 
 def _resolve_failure_message(collected: _CollectedEvents) -> str:
+    """把当前已知状态翻译为更具体的失败说明。"""
     order_status_confirmed = collected.order_event_received or collected.order_status_confirmed
     execution_status_confirmed = (
         collected.execution_event_received or collected.execution_status_confirmed
@@ -482,6 +500,7 @@ def _is_verification_success(
     submit_result: OrderSubmitResult | None,
     collected: _CollectedEvents,
 ) -> bool:
+    """判断当前信息是否足以确认订单已到可接受的终态。"""
     if submit_result is None or not submit_result.accepted:
         return False
 

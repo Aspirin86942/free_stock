@@ -1,3 +1,5 @@
+"""网关协议定义。"""
+
 from __future__ import annotations
 
 from typing import Protocol
@@ -15,6 +17,8 @@ from gmtrade_live.models import (
 
 
 class TradeGateway(Protocol):
+    """交易网关协议。"""
+
     def connect(self, config: AppConfig) -> None:
         ...
 
@@ -38,6 +42,8 @@ class TradeGateway(Protocol):
 
 
 class MarketGateway(Protocol):
+    """行情网关协议。"""
+
     def connect(self, token: str) -> None:
         ...
 

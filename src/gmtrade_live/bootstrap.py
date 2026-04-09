@@ -1,3 +1,5 @@
+"""应用启动层，负责拼装依赖并输出命令行结果。"""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -17,6 +19,7 @@ from gmtrade_live.session import resolve_trading_session
 
 
 def run_m0_connectivity_check(config_path: Path) -> int:
+    """执行 M0 连通性检查并输出精简 JSON 摘要。"""
     config = load_config(config_path)
     logger = setup_logging(config.strategy_name, config.log_dir)
 
@@ -66,6 +69,7 @@ def run_m1_manual_trade(
     price: Decimal | None,
     timeout_seconds: int,
 ) -> int:
+    """执行 M1 手动卖单验证并输出最终交易报告。"""
     config = load_config(config_path)
     logger = setup_logging(config.strategy_name, config.log_dir)
     callback_handler = CallbackHandler(logger)
@@ -88,6 +92,7 @@ def run_m1_manual_trade(
         timeout_seconds=timeout_seconds,
     )
 
+    # CLI 只打印结构化 JSON，便于人工查看和脚本消费共用同一输出。
     print(
         json.dumps(
             {

@@ -1,3 +1,5 @@
+"""交易 SDK 回调到内部事件的转换层。"""
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -89,6 +91,7 @@ class CallbackHandler:
                 return
 
     def _convert_to_order_event(self, payload: Any) -> OrderEvent:
+        # 这里统一兼容 dict 和 SDK 对象两种 payload 形态，避免上层业务分叉处理。
         order_id = str(_read_value(payload, "cl_ord_id", "order_id"))
         symbol = str(_read_value(payload, "symbol"))
         status_code = int(_read_value(payload, "status", default=0))
@@ -127,6 +130,7 @@ class CallbackHandler:
 
 
 def _read_value(payload: Any, *keys: str, default: Any | None = None) -> Any:
+    """按候选字段名读取值，兼容 dict 与对象两种输入。"""
     if isinstance(payload, dict):
         for key in keys:
             if key in payload and payload[key] is not None:
@@ -142,6 +146,7 @@ def _read_value(payload: Any, *keys: str, default: Any | None = None) -> Any:
 
 
 def _read_datetime(payload: Any) -> datetime:
+    """读取回调时间；SDK 未提供时退回当前时间。"""
     for key in ("updated_at", "created_at"):
         value = _read_value(payload, key)
         if isinstance(value, datetime):

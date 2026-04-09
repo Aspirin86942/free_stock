@@ -1,3 +1,5 @@
+"""M0 连通性检查服务。"""
+
 from __future__ import annotations
 
 import logging
@@ -9,6 +11,8 @@ from gmtrade_live.session import TradingSessionState
 
 
 class ConnectivityCheckService:
+    """串联资金、持仓和行情检查，生成 M0 摘要报告。"""
+
     def __init__(
         self,
         *,
@@ -26,6 +30,7 @@ class ConnectivityCheckService:
         config: AppConfig,
         session_state: TradingSessionState,
     ) -> ConnectivityReport:
+        """执行一次 M0 连通性检查。"""
         self._trade_gateway.connect(config)
         self._market_gateway.connect(config.token)
 

@@ -1,3 +1,5 @@
+"""项目命令行入口，负责解析 M0/M1 参数并分发执行。"""
+
 from __future__ import annotations
 
 import argparse
@@ -7,6 +9,7 @@ from typing import Sequence
 
 
 def _parse_positive_int(value: str) -> int:
+    """把命令行整数参数解析为正数。"""
     try:
         parsed = int(value)
     except ValueError as exc:
@@ -17,6 +20,7 @@ def _parse_positive_int(value: str) -> int:
 
 
 def _parse_positive_decimal(value: str) -> Decimal:
+    """把命令行小数参数解析为正 Decimal。"""
     try:
         parsed = Decimal(value)
     except InvalidOperation as exc:
@@ -27,6 +31,7 @@ def _parse_positive_decimal(value: str) -> Decimal:
 
 
 def build_parser() -> argparse.ArgumentParser:
+    """构建项目统一 CLI 参数。"""
     parser = argparse.ArgumentParser(description="GMTrade connectivity and M1 manual trade")
     parser.add_argument("--config", required=True, help="Path to YAML config file")
     parser.add_argument("--mode", choices=("m0", "m1"), default="m0")
@@ -39,6 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def parse_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    """解析并校验 M0/M1 模式所需参数。"""
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -58,6 +64,7 @@ def parse_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def main() -> int:
+    """根据模式选择连通性检查或 M1 手动卖单验证。"""
     args = parse_cli_args()
     from gmtrade_live.bootstrap import run_m0_connectivity_check, run_m1_manual_trade
 

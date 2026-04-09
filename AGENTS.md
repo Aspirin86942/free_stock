@@ -36,11 +36,11 @@ conda run -n stock_analysis python scripts/verify_gm_api.py
 ```bash
 # M1 市价单验证
 conda run -n stock_analysis python main.py --config config/sim_account.yaml --mode m1 \
-  --symbol SHSE.600036 --volume 100 --price-type market --timeout-seconds 60
+  --symbol SHSE.600839 --volume 100 --price-type market --timeout-seconds 60
 
 # M1 限价单验证
 conda run -n stock_analysis python main.py --config config/sim_account.yaml --mode m1 \
-  --symbol SHSE.600036 --volume 100 --price-type limit --price 10.50 \
+  --symbol SHSE.600839 --volume 100 --price-type limit --price 10.50 \
   --timeout-seconds 120
 ```
 
