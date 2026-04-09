@@ -37,9 +37,6 @@ class TradeGateway(Protocol):
     def query_execution_reports(self, cl_ord_id: str) -> tuple[OrderExecutionSnapshot, ...]:
         ...
 
-    def poll_callbacks(self) -> None:
-        ...
-
 
 class MarketGateway(Protocol):
     """行情网关协议。"""

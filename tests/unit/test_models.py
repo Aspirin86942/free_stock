@@ -47,6 +47,18 @@ def test_order_request_limit_order() -> None:
     assert request.price == Decimal("10.50")
 
 
+def test_order_request_buy_market_order() -> None:
+    request = OrderRequest(
+        symbol="SHSE.600036",
+        volume=100,
+        side="buy",
+        price_type="market",
+        price=None,
+    )
+
+    assert request.side == "buy"
+
+
 def test_order_submit_result_accepted() -> None:
     result = OrderSubmitResult(
         accepted=True,
@@ -145,15 +157,13 @@ def test_order_execution_snapshot() -> None:
 def test_trade_report_success() -> None:
     report = TradeReport(
         account_id="demo-account",
+        side="sell",
         symbol="SHSE.600036",
         requested_volume=100,
         price_type="market",
         submit_accepted=True,
         cl_ord_id="123456",
         broker_order_id="654321",
-        order_event_received=True,
-        execution_event_received=True,
-        callback_chain_closed=True,
         order_status_confirmed=True,
         execution_status_confirmed=True,
         last_order_status="filled",
@@ -161,29 +171,27 @@ def test_trade_report_success() -> None:
         filled_volume=100,
         avg_price=Decimal("10.45"),
         verification_passed=True,
-        message="M1 verification completed successfully",
+        message="交易状态已确认",
         started_at=_now(),
         finished_at=_now(),
     )
 
     assert report.verification_passed is True
-    assert report.callback_chain_closed is True
-    assert report.order_event_received is True
-    assert report.execution_event_received is True
+    assert report.order_status_confirmed is True
+    assert report.execution_status_confirmed is True
+    assert report.message == "交易状态已确认"
 
 
 def test_trade_report_timeout() -> None:
     report = TradeReport(
         account_id="demo-account",
+        side="sell",
         symbol="SHSE.600036",
         requested_volume=100,
         price_type="market",
         submit_accepted=True,
         cl_ord_id="123456",
         broker_order_id="654321",
-        order_event_received=False,
-        execution_event_received=False,
-        callback_chain_closed=False,
         order_status_confirmed=True,
         execution_status_confirmed=False,
         last_order_status="rejected",
@@ -191,13 +199,37 @@ def test_trade_report_timeout() -> None:
         filled_volume=0,
         avg_price=None,
         verification_passed=True,
-        message="交易状态已确认，但回调链路未闭环",
+        message="交易状态已确认",
         started_at=_now(),
         finished_at=_now(),
     )
 
     assert report.verification_passed is True
-    assert report.callback_chain_closed is False
     assert report.order_status_confirmed is True
     assert report.rejection_reason == "invalid_volume"
-    assert report.message == "交易状态已确认，但回调链路未闭环"
+    assert report.message == "交易状态已确认"
+
+
+def test_trade_report_includes_side() -> None:
+    report = TradeReport(
+        account_id="demo-account",
+        side="sell",
+        symbol="SHSE.600036",
+        requested_volume=1,
+        price_type="market",
+        submit_accepted=False,
+        cl_ord_id=None,
+        broker_order_id=None,
+        order_status_confirmed=False,
+        execution_status_confirmed=False,
+        last_order_status=None,
+        rejection_reason=None,
+        filled_volume=0,
+        avg_price=None,
+        verification_passed=False,
+        message="",
+        started_at=_now(),
+        finished_at=_now(),
+    )
+
+    assert report.side == "sell"

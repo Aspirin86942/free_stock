@@ -4,20 +4,20 @@ from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
-import sys
-import types
 from zoneinfo import ZoneInfo
 
 import pytest
+from gm.enum import (
+    OrderSide_Buy,
+    OrderSide_Sell,
+    PositionEffect_Close,
+    PositionEffect_Open,
+)
 
 from gmtrade_live.config import AppConfig
 from gmtrade_live.errors import ServiceError
-from gmtrade_live.gateways.callback_handler import CallbackHandler
 from gmtrade_live.gateways.gm_market_gateway import GMCurrentQuoteGateway
-from gmtrade_live.gateways.gmtrade_trade_gateway import (
-    GMTradeQueryGateway,
-    _register_gm_callbacks,
-)
+from gmtrade_live.gateways.gmtrade_trade_gateway import GMTradeQueryGateway
 from gmtrade_live.models import OrderRequest
 
 
@@ -26,8 +26,6 @@ class FakeGMApi:
         self.token = None
         self.serv_addr = None
         self.account_id = None
-        self.order_callback = None
-        self.execution_report_callback = None
         self.last_order_kwargs = None
 
     def set_token(self, token: str) -> None:
@@ -38,12 +36,6 @@ class FakeGMApi:
 
     def set_account_id(self, account_id: str) -> None:
         self.account_id = account_id
-
-    def set_order_callback(self, callback) -> None:
-        self.order_callback = callback
-
-    def set_execution_report_callback(self, callback) -> None:
-        self.execution_report_callback = callback
 
     def get_cash(self, account_id: str | None = None) -> dict[str, object]:
         return {
@@ -224,15 +216,12 @@ def test_gm_api_gateway_handles_missing_timestamp_fields() -> None:
     assert positions[0].last_update_time is not None  # 应该使用当前时间
 
 
-def test_gm_api_gateway_registers_callbacks_and_submits_order() -> None:
+def test_gm_api_gateway_submits_order_via_query_driven_path() -> None:
     api = FakeGMApi()
     gateway = GMTradeQueryGateway(api_module=api, account_id="demo-account")
     config = _build_config()
-    logger = __import__("logging").getLogger("test")
-    handler = CallbackHandler(logger)
 
     gateway.connect(config)
-    gateway.set_callback_handler(handler)
     result = gateway.submit_order(
         OrderRequest(
             symbol="SHSE.600036",
@@ -247,15 +236,39 @@ def test_gm_api_gateway_registers_callbacks_and_submits_order() -> None:
     assert api.serv_addr == "api.myquant.cn:9000"
     # connect() 不应在 M0/M1 查询链路里全局绑定账户，否则会把 gm SDK 全局状态带进后续调用。
     assert api.account_id is None
-    assert api.order_callback == handler.on_order_status
-    assert api.execution_report_callback == handler.on_execution_report
     assert api.last_order_kwargs is not None
     assert api.last_order_kwargs["symbol"] == "SHSE.600036"
     assert api.last_order_kwargs["volume"] == 100
     assert api.last_order_kwargs["account"] == "demo-account"
+    assert api.last_order_kwargs["side"] == OrderSide_Sell
+    assert api.last_order_kwargs["position_effect"] == PositionEffect_Close
     assert result.accepted is True
     assert result.cl_ord_id == "ORDER_1"
     assert result.broker_order_id is None
+
+
+def test_gm_api_gateway_submits_buy_order_via_query_driven_path() -> None:
+    api = FakeGMApi()
+    gateway = GMTradeQueryGateway(api_module=api, account_id="demo-account")
+    config = _build_config()
+
+    gateway.connect(config)
+    result = gateway.submit_order(
+        OrderRequest(
+            symbol="SHSE.600036",
+            volume=100,
+            side="buy",
+            price_type="market",
+            price=None,
+        )
+    )
+
+    assert api.last_order_kwargs is not None
+    assert api.last_order_kwargs["account"] == "demo-account"
+    assert api.last_order_kwargs["side"] == OrderSide_Buy
+    assert api.last_order_kwargs["position_effect"] == PositionEffect_Open
+    assert result.accepted is True
+    assert result.cl_ord_id == "ORDER_1"
 
 
 def test_gm_api_gateway_filters_order_status_by_cl_ord_id(
@@ -361,44 +374,3 @@ def test_gm_api_gateway_filters_execution_reports_by_cl_ord_id(
     assert snapshots[0].symbol == "SHSE.600036"
     assert snapshots[0].filled_volume == 100
     assert snapshots[0].avg_price == Decimal("10.450")
-
-
-def test_register_gm_callbacks_initializes_runtime(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls: dict[str, object] = {}
-    fake_context = SimpleNamespace(
-        on_order_status_fun=None,
-        on_execution_report_fun=None,
-        mode=None,
-        strategy_id="",
-    )
-    fake_callback_module = types.SimpleNamespace(callback_controller="controller")
-    fake_c_sdk_module = types.SimpleNamespace(
-        py_gmi_set_data_callback=lambda callback: calls.setdefault(
-            "data_callback",
-            callback,
-        ),
-        py_gmi_set_strategy_id=lambda strategy_id: calls.setdefault(
-            "strategy_id",
-            strategy_id,
-        ),
-        gmi_init=lambda: calls.setdefault("gmi_init", 0),
-        gmi_set_mode=lambda mode: calls.setdefault("mode", mode),
-    )
-    fake_storage_module = types.SimpleNamespace(context=fake_context)
-    fake_errors_module = types.SimpleNamespace(check_gm_status=lambda status: status)
-
-    monkeypatch.setitem(sys.modules, "gm.callback", fake_callback_module)
-    monkeypatch.setitem(sys.modules, "gm.csdk.c_sdk", fake_c_sdk_module)
-    monkeypatch.setitem(sys.modules, "gm.model.storage", fake_storage_module)
-    monkeypatch.setitem(sys.modules, "gm.api._errors", fake_errors_module)
-
-    handler = CallbackHandler(__import__("logging").getLogger("test"))
-    _register_gm_callbacks(handler)
-
-    assert fake_context.on_order_status_fun == handler.on_order_status
-    assert fake_context.on_execution_report_fun == handler.on_execution_report
-    assert calls["data_callback"] == "controller"
-    assert calls["gmi_init"] == 0
-    assert calls["strategy_id"] == b"m1_manual_trade"

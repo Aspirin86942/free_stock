@@ -40,6 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--price-type", choices=("market", "limit"))
     parser.add_argument("--price", type=_parse_positive_decimal)
     parser.add_argument("--timeout-seconds", type=_parse_positive_int, default=60)
+    parser.add_argument("--side", choices=("buy", "sell"))
     return parser
 
 
@@ -59,12 +60,14 @@ def parse_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             parser.error("--price-type limit 时必须提供 --price")
         if args.price_type == "market" and args.price is not None:
             parser.error("--price-type market 时不能提供 --price")
+        if not args.side:
+            parser.error("--mode m1 时必须提供 --side")
 
     return args
 
 
 def main() -> int:
-    """根据模式选择连通性检查或 M1 手动卖单验证。"""
+    """根据模式选择连通性检查或 M1 手工交易验证。"""
     args = parse_cli_args()
     from gmtrade_live.bootstrap import run_m0_connectivity_check, run_m1_manual_trade
 
@@ -77,6 +80,7 @@ def main() -> int:
             price_type=args.price_type,
             price=args.price,
             timeout_seconds=args.timeout_seconds,
+            side=args.side,
         )
     return run_m0_connectivity_check(config_path)
 

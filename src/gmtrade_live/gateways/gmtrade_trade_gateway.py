@@ -5,10 +5,17 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 import importlib
-from typing import TYPE_CHECKING, Any
+from typing import Any
 from zoneinfo import ZoneInfo
 
-from gm.enum import OrderSide_Sell, OrderType_Limit, OrderType_Market, PositionEffect_Close
+from gm.enum import (
+    OrderSide_Buy,
+    OrderSide_Sell,
+    OrderType_Limit,
+    OrderType_Market,
+    PositionEffect_Close,
+    PositionEffect_Open,
+)
 
 from gmtrade_live.config import AppConfig
 from gmtrade_live.errors import ServiceError
@@ -22,12 +29,9 @@ from gmtrade_live.models import (
 )
 from gmtrade_live.precision import normalize_amount, normalize_price
 
-if TYPE_CHECKING:
-    from gmtrade_live.gateways.callback_handler import CallbackHandler
-
 
 class GMTradeQueryGateway:
-    """负责交易、查单、查成交和回调注册的统一入口。"""
+    """负责交易、查单和查成交的统一入口。"""
 
     def __init__(
         self,
@@ -36,8 +40,6 @@ class GMTradeQueryGateway:
     ) -> None:
         self._api = api_module or importlib.import_module("gm.api")
         self._account_id = account_id
-        self._callback_handler: CallbackHandler | None = None
-        self._callback_runtime_ready = False
 
     def connect(self, config: AppConfig) -> None:
         """绑定 token、服务地址和账户上下文。"""
@@ -93,38 +95,13 @@ class GMTradeQueryGateway:
             )
         return results
 
-    def set_callback_handler(self, handler: CallbackHandler) -> None:
-        """优先走显式 setter，真实 gm SDK 则退回到全局 context 注册。"""
-        self._callback_handler = handler
-
-        registered = False
-        if hasattr(self._api, "set_order_callback"):
-            self._api.set_order_callback(handler.on_order_status)
-            registered = True
-        if hasattr(self._api, "set_execution_report_callback"):
-            self._api.set_execution_report_callback(handler.on_execution_report)
-            registered = True
-
-        if registered:
-            return
-
-        _register_gm_callbacks(handler)
-        self._callback_runtime_ready = True
-
     def submit_order(self, request: OrderRequest) -> OrderSubmitResult:
-        """提交卖单并把掘金原始返回转换为内部提交结果。"""
+        """提交委托并把掘金原始返回转换为内部提交结果。"""
         if self._account_id is None:
             raise ServiceError(
                 code="gmtrade.missing_account_id",
                 message="交易网关尚未绑定账户，无法提交委托",
                 retryable=False,
-            )
-        if request.side != "sell":
-            raise ServiceError(
-                code="gmtrade.unsupported_side",
-                message="M1 仅支持手动卖单验证",
-                retryable=False,
-                context={"side": request.side},
             )
         if request.volume <= 0:
             raise ServiceError(
@@ -136,12 +113,13 @@ class GMTradeQueryGateway:
 
         order_type = _resolve_order_type(request.price_type)
         order_price = _resolve_submit_price(request)
+        submit_side, position_effect = _resolve_submit_side_and_effect(request.side)
         raw_result = self._api.order_volume(
             symbol=request.symbol,
             volume=request.volume,
-            side=OrderSide_Sell,
+            side=submit_side,
             order_type=order_type,
-            position_effect=PositionEffect_Close,
+            position_effect=position_effect,
             price=order_price,
             account=self._account_id,
         )
@@ -248,13 +226,6 @@ class GMTradeQueryGateway:
             )
         return tuple(snapshots)
 
-    def poll_callbacks(self) -> None:
-        """仅在注册了 gm 原生回调轮询时驱动回调通道。"""
-        if not self._callback_runtime_ready:
-            return
-        _poll_gm_callbacks()
-
-
 GMTradeGateway = GMTradeQueryGateway
 
 
@@ -335,6 +306,20 @@ def _resolve_order_type(price_type: str) -> int:
         message="仅支持 market 或 limit 委托类型",
         retryable=False,
         context={"price_type": price_type},
+    )
+
+
+def _resolve_submit_side_and_effect(side: str) -> tuple[int, int]:
+    """把内部买卖方向映射为掘金下单常量。"""
+    if side == "sell":
+        return OrderSide_Sell, PositionEffect_Close
+    if side == "buy":
+        return OrderSide_Buy, PositionEffect_Open
+    raise ServiceError(
+        code="gmtrade.invalid_side",
+        message="side 仅支持 buy 或 sell",
+        retryable=False,
+        context={"side": side},
     )
 
 
@@ -483,50 +468,3 @@ def _as_optional_str(value: Any) -> str | None:
     if value in (None, ""):
         return None
     return str(value)
-
-
-def _register_gm_callbacks(handler: CallbackHandler) -> None:
-    """在真实 gm 运行时里注册订单和成交回调。"""
-    try:
-        from gm.callback import callback_controller
-        from gm.csdk.c_sdk import (
-            gmi_init,
-            gmi_set_mode,
-            py_gmi_set_data_callback,
-            py_gmi_set_strategy_id,
-        )
-        from gm.api._errors import check_gm_status
-        from gm.enum import MODE_LIVE
-        from gm.model.storage import context as gm_context
-    except ImportError as exc:
-        raise ServiceError(
-            code="gmtrade.callback_registration_failed",
-            message="无法注册掘金回调函数",
-            retryable=False,
-            context={"reason": str(exc)},
-        ) from exc
-
-    # 直接把回调挂到 gm 全局 context，保证真实终端回报能进入本项目队列。
-    gm_context.on_order_status_fun = handler.on_order_status
-    gm_context.on_execution_report_fun = handler.on_execution_report
-    gm_context.mode = MODE_LIVE
-    gm_context.strategy_id = "m1_manual_trade"
-    py_gmi_set_strategy_id(b"m1_manual_trade")
-    gmi_set_mode(MODE_LIVE)
-    py_gmi_set_data_callback(callback_controller)
-    check_gm_status(gmi_init())
-
-
-def _poll_gm_callbacks() -> None:
-    """驱动 gm 底层回调轮询。"""
-    try:
-        from gm.csdk.c_sdk import gmi_poll
-    except ImportError as exc:
-        raise ServiceError(
-            code="gmtrade.callback_poll_failed",
-            message="无法轮询掘金回调通道",
-            retryable=False,
-            context={"reason": str(exc)},
-        ) from exc
-
-    gmi_poll()

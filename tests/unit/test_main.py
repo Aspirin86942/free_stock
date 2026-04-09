@@ -39,6 +39,8 @@ def test_parse_cli_args_accepts_m1_market_order() -> None:
             "market",
             "--timeout-seconds",
             "90",
+            "--side",
+            "sell",
         ]
     )
 
@@ -49,7 +51,31 @@ def test_parse_cli_args_accepts_m1_market_order() -> None:
     assert args.timeout_seconds == 90
 
 
-def test_parse_cli_args_requires_price_for_limit_order() -> None:
+def test_parse_cli_args_accepts_m1_buy_market_order() -> None:
+    args = main.parse_cli_args(
+        [
+            "--config",
+            "config/sim_account.yaml",
+            "--mode",
+            "m1",
+            "--symbol",
+            "SHSE.600036",
+            "--volume",
+            "100",
+            "--price-type",
+            "market",
+            "--timeout-seconds",
+            "90",
+            "--side",
+            "buy",
+        ]
+    )
+
+    assert args.mode == "m1"
+    assert args.side == "buy"
+
+
+def test_parse_cli_args_requires_side_for_m1() -> None:
     with pytest.raises(SystemExit):
         main.parse_cli_args(
             [
@@ -62,26 +88,50 @@ def test_parse_cli_args_requires_price_for_limit_order() -> None:
                 "--volume",
                 "100",
                 "--price-type",
-                "limit",
+                "market",
+                "--timeout-seconds",
+                "90",
             ]
+        )
+
+
+def test_parse_cli_args_requires_price_for_limit_order() -> None:
+    with pytest.raises(SystemExit):
+        main.parse_cli_args(
+        [
+            "--config",
+            "config/sim_account.yaml",
+            "--mode",
+            "m1",
+            "--symbol",
+            "SHSE.600036",
+            "--volume",
+            "100",
+            "--price-type",
+            "limit",
+            "--side",
+            "sell",
+        ]
         )
 
 
 def test_parse_cli_args_rejects_non_positive_volume() -> None:
     with pytest.raises(SystemExit):
         main.parse_cli_args(
-            [
-                "--config",
-                "config/sim_account.yaml",
-                "--mode",
-                "m1",
-                "--symbol",
-                "SHSE.600036",
-                "--volume",
-                "0",
-                "--price-type",
-                "market",
-            ]
+        [
+            "--config",
+            "config/sim_account.yaml",
+            "--mode",
+            "m1",
+            "--symbol",
+            "SHSE.600036",
+            "--volume",
+            "0",
+            "--price-type",
+            "market",
+            "--side",
+            "sell",
+        ]
         )
 
 
@@ -140,6 +190,8 @@ def test_main_dispatches_to_m1(monkeypatch: pytest.MonkeyPatch) -> None:
             "10.50",
             "--timeout-seconds",
             "120",
+            "--side",
+            "sell",
         ],
     )
 
@@ -150,3 +202,4 @@ def test_main_dispatches_to_m1(monkeypatch: pytest.MonkeyPatch) -> None:
     assert captured["price_type"] == "limit"
     assert captured["price"] == Decimal("10.50")
     assert captured["timeout_seconds"] == 120
+    assert captured["side"] == "sell"

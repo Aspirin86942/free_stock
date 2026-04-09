@@ -9,7 +9,6 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from gmtrade_live.config import load_config
-from gmtrade_live.gateways.callback_handler import CallbackHandler
 from gmtrade_live.gateways.gm_market_gateway import GMCurrentQuoteGateway
 from gmtrade_live.gateways.gmtrade_trade_gateway import GMTradeQueryGateway
 from gmtrade_live.logging_setup import setup_logging
@@ -68,19 +67,17 @@ def run_m1_manual_trade(
     price_type: str,
     price: Decimal | None,
     timeout_seconds: int,
+    side: str,
 ) -> int:
-    """执行 M1 手动卖单验证并输出最终交易报告。"""
+    """执行 M1 手工交易验证并输出最终交易报告。"""
     config = load_config(config_path)
     logger = setup_logging(config.strategy_name, config.log_dir)
-    callback_handler = CallbackHandler(logger)
     gateway = GMTradeQueryGateway(account_id=config.account_id)
 
     gateway.connect(config)
-    gateway.set_callback_handler(callback_handler)
 
     service = ManualTradeService(
         trade_gateway=gateway,
-        callback_handler=callback_handler,
         logger=logger,
     )
     report = service.run(
@@ -90,6 +87,7 @@ def run_m1_manual_trade(
         price_type=price_type,
         price=price,
         timeout_seconds=timeout_seconds,
+        side=side,
     )
 
     # CLI 只打印结构化 JSON，便于人工查看和脚本消费共用同一输出。
@@ -97,12 +95,10 @@ def run_m1_manual_trade(
         json.dumps(
             {
                 "verification_passed": report.verification_passed,
+                "side": report.side,
                 "cl_ord_id": report.cl_ord_id,
                 "broker_order_id": report.broker_order_id,
                 "submit_accepted": report.submit_accepted,
-                "order_event_received": report.order_event_received,
-                "execution_event_received": report.execution_event_received,
-                "callback_chain_closed": report.callback_chain_closed,
                 "order_status_confirmed": report.order_status_confirmed,
                 "execution_status_confirmed": report.execution_status_confirmed,
                 "last_order_status": report.last_order_status,

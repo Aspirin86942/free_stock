@@ -34,13 +34,13 @@ conda run -n stock_analysis python scripts/verify_gm_api.py
 
 ### M1 手动验证
 ```bash
-# M1 市价单验证
+# M1 手动卖出验证
 conda run -n stock_analysis python main.py --config config/sim_account.yaml --mode m1 \
-  --symbol SHSE.600839 --volume 100 --price-type market --timeout-seconds 60
+  --side sell --symbol SHSE.600839 --volume 100 --price-type market --timeout-seconds 60
 
-# M1 限价单验证
+# M1 手动买入验证
 conda run -n stock_analysis python main.py --config config/sim_account.yaml --mode m1 \
-  --symbol SHSE.600839 --volume 100 --price-type limit --price 10.50 \
+  --side buy --symbol SHSE.600839 --volume 100 --price-type limit --price 10.50 \
   --timeout-seconds 120
 ```
 

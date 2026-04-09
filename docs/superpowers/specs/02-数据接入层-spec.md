@@ -1,10 +1,12 @@
 # 数据接入层 Spec
 
+> 本文件已按最新查询驱动架构修订。
+
 ## 1. 文档目标
 
 本文定义第一期实盘执行系统的数据接入层边界、职责、内部契约、异常口径和验收标准。
 
-第一期的数据接入层只做一件事：把东方财富掘金官方接口转换成系统内部可稳定消费的数据和事件。它不负责业务判断，也不负责策略状态流转。
+第一期的数据接入层只做一件事：把东方财富掘金官方接口转换成系统内部可稳定消费的快照、提交结果和查询结果。它不负责业务判断，也不负责策略状态流转。
 
 ## 2. 本层定位
 
@@ -15,7 +17,8 @@
 - 持仓读取
 - 行情读取
 - 卖出委托提交
-- 委托与成交回报接收
+- 委托状态查询
+- 成交明细查询
 
 本层必须把掘金 SDK 或接口的原始结构收敛为系统内部统一对象，避免上层直接依赖第三方字段。
 
@@ -26,9 +29,10 @@
 - 初始化掘金运行环境
 - 完成账户连通和鉴权
 - 拉取账户资产、可用资金和持仓
-- 拉取或订阅持仓标的行情
+- 拉取持仓标的行情
 - 提交卖出委托
-- 接收委托状态和成交回报
+- 查询委托状态
+- 查询成交明细
 - 输出统一错误对象和原始响应审计信息
 
 ### 3.2 不在本层范围
@@ -37,7 +41,7 @@
 - 交易时段判断
 - 卖出许可判断
 - 防重复卖单规则本身
-- 逐标的业务状态机
+- 状态聚合与状态机推进
 
 这些能力分别属于基础设施层、核心决策层和交易执行层。
 
@@ -46,13 +50,13 @@
 数据接入层直接支撑以下里程碑：
 
 - `M0 环境与账户连通`
-- `M1 数据接入跑通`
+- `M1 手动交易查询收口`
 - `M3 自动卖出执行闭环`
 
 其中：
 
 - `M0` 关注账户、资金、持仓、行情是否可读
-- `M1` 关注委托提交和回报接收是否跑通
+- `M1` 关注委托提交、查单、查成交是否跑通
 - `M3` 关注本层能否稳定支撑上层形成完整卖出闭环
 
 ## 5. 输入、输出与依赖
@@ -64,6 +68,7 @@
 - 账户标识
 - 目标标的列表
 - 卖出委托请求
+- 内部委托号
 
 ### 5.2 输出
 
@@ -71,7 +76,8 @@
 - 持仓快照列表
 - 行情快照列表
 - 委托提交结果
-- 委托事件和成交事件
+- 委托状态快照
+- 成交明细快照列表
 - 统一错误对象
 
 ### 5.3 依赖
@@ -80,8 +86,6 @@
 - 东方财富掘金官方 Python 接口
 - 本地网络环境
 - 基础设施层提供的配置、日志和运行上下文
-
-第一期不混用 AkShare、新浪、腾讯或其他第三方行情源。
 
 ## 6. 内部能力拆分
 
@@ -140,113 +144,68 @@
 - 本层只负责调用成功与否，不负责“该不该下单”
 - 委托提交结果必须保留原始响应摘要，便于审计
 
-### 6.5 委托与成交回报接收
+### 6.5 委托状态查询
 
 职责：
 
-- 接收委托状态变化
-- 接收成交回报
-- 把回报转换为统一内部事件
+- 按内部委托号查询订单当前状态
+- 统一映射状态码、数量和错误原因
+- 输出 `OrderStatusSnapshot`
 
 要求：
 
-- 回报事件必须包含订单标识、标的代码、状态、数量、时间
-- 无法识别的回报状态必须落错误日志
-- 回报不能直接改写上层业务状态，只能输出事件
+- 结果必须包含 `cl_ord_id`、`broker_order_id`、`symbol`、`status`、`filled_volume`、`remaining_volume`、`event_time`
+- 无法识别的状态码必须保留原始上下文并落错误日志
+- 查不到订单时返回 `None`，由上层决定是否继续轮询
 
-#### 6.5.1 回报处理机制
+### 6.6 成交明细查询
 
-第一期采用**回调函数 + 事件队列**模式：
+职责：
 
-1. 注册掘金 SDK 的回调函数
-2. 回调函数将回报事件放入内部队列
-3. 主循环从队列中取出事件并处理
+- 按内部委托号查询成交明细
+- 统一映射成交量、均价和时间
+- 输出 `tuple[OrderExecutionSnapshot, ...]`
 
-**回调函数职责：**
+要求：
 
-- 接收原始回报对象
-- 转换为内部事件对象
-- 放入事件队列
+- 查询结果必须只包含当前内部委托号对应的记录
+- 单条成交价格必须统一为 `Decimal`
+- 没有成交记录时返回空元组，而不是异常
 
-**回调函数禁止：**
+## 7. 查询驱动契约
 
-- 直接更新状态
-- 执行业务逻辑
-- 调用其他接口
-- 阻塞等待
+第一期统一采用**查询驱动**：
 
-**示例代码：**
+1. 下单后先拿同步提交结果
+2. 主流程按固定节奏查单
+3. 订单进入成交相关状态后再查成交
+4. 查询结果先转成内部事件，再由上层聚合或后续状态机消费
 
-```python
-from queue import Queue
+### 7.1 Gateway 协议
 
-# 全局事件队列
-callback_queue: Queue = Queue()
-
-def on_order_status(order):
-    """委托状态变化回调"""
-    try:
-        event = OrderStatusEvent.from_gmtrade(order)
-        callback_queue.put(event)
-    except Exception as e:
-        logger.error(f"回调函数异常: {e}", exc_info=True)
-
-def on_execution_report(execution):
-    """成交回报回调"""
-    try:
-        event = ExecutionEvent.from_gmtrade(execution)
-        callback_queue.put(event)
-    except Exception as e:
-        logger.error(f"回调函数异常: {e}", exc_info=True)
-
-# 注册回调
-gmtrade.api.set_order_callback(on_order_status)
-gmtrade.api.set_execution_callback(on_execution_report)
-
-# 主循环处理
-while True:
-    # 1. 处理所有回报
-    while not callback_queue.empty():
-        event = callback_queue.get()
-        handle_callback_event(event)
-    
-    # 2. 执行判断和发单
-    execute_one_round()
-    
-    time.sleep(5)
-```
-
-#### 6.5.2 回报事件类型
-
-定义两种内部事件：
-
-**OrderStatusEvent（委托状态事件）：**
+当前交易网关至少暴露以下方法：
 
 ```python
-@dataclass
-class OrderStatusEvent:
-    order_id: str
-    symbol: str
-    status: str  # new/submitted/partial_filled/filled/cancelled/rejected
-    event_time: datetime
-    message: str
+class TradeGateway(Protocol):
+    def connect(self, config: AppConfig) -> None: ...
+    def get_cash(self, account_id: str) -> CashSnapshot: ...
+    def get_positions(self, account_id: str) -> list[PositionSnapshot]: ...
+    def submit_order(self, request: OrderRequest) -> OrderSubmitResult: ...
+    def query_order_status(self, cl_ord_id: str, symbol: str) -> OrderStatusSnapshot | None: ...
+    def query_execution_reports(self, cl_ord_id: str) -> tuple[OrderExecutionSnapshot, ...]: ...
 ```
 
-**ExecutionEvent（成交事件）：**
+### 7.2 内部事件口径
 
-```python
-@dataclass
-class ExecutionEvent:
-    order_id: str
-    symbol: str
-    filled_volume: int
-    avg_price: Decimal
-    event_time: datetime
-```
+本层对外暴露的是快照对象；上层在消费时应把快照进一步整理成内部事件，再驱动状态聚合。第一期内部事件至少要能表达：
 
-## 7. 数据契约
+- 一次查单结果
+- 一次查成交结果
+- 一笔订单当前聚合状态
 
-### 7.1 账户快照
+## 8. 数据契约
+
+### 8.1 账户快照
 
 | 字段 | 说明 |
 | --- | --- |
@@ -256,7 +215,7 @@ class ExecutionEvent:
 | `total_asset` | 总资产 |
 | `update_time` | 快照时间 |
 
-### 7.2 持仓快照
+### 8.2 持仓快照
 
 | 字段 | 说明 |
 | --- | --- |
@@ -267,168 +226,63 @@ class ExecutionEvent:
 | `cost_price` | 持仓成本 |
 | `last_update_time` | 快照时间 |
 
-### 7.3 行情快照
+### 8.3 行情快照
 
 | 字段 | 说明 |
 | --- | --- |
 | `symbol` | 标的代码 |
 | `last_price` | 最新价 |
 | `quote_time` | 行情时间 |
-| `source` | 固定为 `gmtrade` |
+| `source` | 行情来源 |
 
-### 7.4 卖出委托请求
-
-| 字段 | 说明 |
-| --- | --- |
-| `symbol` | 标的代码 |
-| `volume` | 卖出数量 |
-| `side` | 固定为 `sell` |
-| `price_type` | 市价或限价类型 |
-| `price` | 限价单价格，可为空 |
-
-### 7.5 委托提交结果
+### 8.4 委托提交结果
 
 | 字段 | 说明 |
 | --- | --- |
 | `accepted` | 是否被接口受理 |
-| `order_id` | 委托标识 |
+| `cl_ord_id` | 内部委托号 |
+| `broker_order_id` | 柜台委托号 |
 | `symbol` | 标的代码 |
 | `message` | 接口返回说明 |
 | `raw_status` | 原始状态摘要 |
 | `event_time` | 响应时间 |
 
-### 7.6 回报事件
+### 8.5 委托状态快照
 
 | 字段 | 说明 |
 | --- | --- |
-| `order_id` | 委托标识 |
+| `cl_ord_id` | 内部委托号 |
+| `broker_order_id` | 柜台委托号 |
 | `symbol` | 标的代码 |
-| `event_type` | `order` 或 `trade` |
 | `status` | 当前状态 |
 | `filled_volume` | 已成交数量 |
 | `remaining_volume` | 剩余数量 |
+| `rejection_reason` | 拒单或失败原因 |
+| `event_time` | 查询结果时间 |
+
+### 8.6 成交快照
+
+| 字段 | 说明 |
+| --- | --- |
+| `cl_ord_id` | 内部委托号 |
+| `broker_order_id` | 柜台委托号 |
+| `symbol` | 标的代码 |
+| `filled_volume` | 本条成交数量 |
 | `avg_price` | 成交均价 |
-| `event_time` | 回报时间 |
+| `event_time` | 查询结果时间 |
 
-### 7.7 数据精度约定
+## 9. 错误口径
 
-所有从外部接口读取的数据，必须在数据接入层统一转换为以下精度：
+- 字段缺失必须抛出结构化错误
+- 查询接口无结果时，返回空对象或 `None`，不得伪造成功
+- 柜台拒绝、余额不足、仓位不足等业务错误必须保留原始原因
+- 时间字段缺失时可以使用当前时间补齐，但必须在实现中统一处理
 
-| 字段类型 | 精度 | 说明 |
-|---------|------|------|
-| 价格 | 3 位小数 | A 股最小变动 0.01 元，保留 3 位用于计算 |
-| 金额 | 2 位小数 | 资金、市值等 |
-| 数量 | 整数 | 股数，不是手数（100 股 = 1 手） |
-| 比例 | 4 位小数 | 止盈止损比例，如 0.0500 表示 5% |
+## 10. 验收标准
 
-**精度转换函数：**
-
-```python
-from decimal import Decimal, ROUND_HALF_UP
-
-def normalize_price(value: float | Decimal) -> Decimal:
-    """标准化价格为 3 位小数"""
-    return Decimal(str(value)).quantize(Decimal("0.001"), rounding=ROUND_HALF_UP)
-
-def normalize_amount(value: float | Decimal) -> Decimal:
-    """标准化金额为 2 位小数"""
-    return Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-
-def normalize_ratio(value: float | Decimal) -> Decimal:
-    """标准化比例为 4 位小数"""
-    return Decimal(str(value)).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
-```
-
-**使用示例：**
-
-```python
-# 从掘金读取的原始数据
-raw_price = 10.123456  # float
-raw_cost = 1000.5678   # float
-
-# 转换为标准精度
-price = normalize_price(raw_price)    # Decimal("10.123")
-cost = normalize_amount(raw_cost)     # Decimal("1000.57")
-
-# 计算止盈阈值
-take_profit_ratio = normalize_ratio(0.05)  # Decimal("0.0500")
-threshold = normalize_price(cost * (Decimal("1") + take_profit_ratio))
-```
-
-## 8. 错误处理策略
-
-第一期禁止把接口问题隐藏为业务空结果。
-
-错误处理口径如下：
-
-- 鉴权失败：直接中止启动
-- 账户读取失败：返回显式错误，保留错误上下文
-- 持仓读取失败：返回显式错误，当前轮不进入后续判断
-- 行情读取失败：返回显式错误，当前标的不进入卖出判断
-- 委托提交失败：返回失败结果，由交易执行层决定如何收口
-- 回报解析失败：记录错误日志，并保留原始载荷摘要
-
-第一期不引入复杂重试编排，默认由下一轮调度重新拉起读取链路。
-
-## 9. 日志与审计要求
-
-本层至少记录以下事件：
-
-- 账户连通成功或失败
-- 账户读取成功或失败
-- 持仓读取成功或失败
-- 行情读取成功或失败
-- 卖出委托提交请求和结果
-- 委托回报和成交回报
-
-关键日志至少包含：
-
-- 账户标识
-- 标的代码
-- 接口动作
-- 返回状态
-- 时间
-- 错误原因
-
-## 10. 对上游和下游层的接口要求
-
-### 10.1 对基础设施层的要求
-
-- 提供已校验配置
-- 提供统一日志对象
-- 提供运行上下文和时区
-
-### 10.2 对核心决策层的交付物
-
-- 统一账户快照
-- 统一持仓快照
-- 统一行情快照
-- 显式错误对象
-
-### 10.3 对交易执行层的交付物
-
-- 委托提交能力
-- 委托提交结果
-- 委托与成交回报事件流
-
-## 11. 测试要求
-
-虽然测试章节单独成册，但本层必须至少满足以下最小测试口径：
-
-- 鉴权失败时能否正确阻止启动
-- 账户对象能否正确转换为内部快照
-- 持仓对象能否正确转换为内部快照
-- 行情对象能否正确转换为内部快照
-- 委托提交结果能否正确转换为内部结果
-- 回报事件能否正确转换为统一事件对象
-
-## 12. 本层完成定义
-
-数据接入层可视为完成，至少需要满足以下条件：
-
-- 掘金账户连通可验证
-- 账户、持仓、行情可稳定读取
-- 卖出委托可提交
-- 委托与成交回报可接收
-- 所有返回结构已统一收敛
-- 关键错误不会被吞掉
+- 能完成账户连通
+- 能稳定读取账户、持仓、行情
+- 能提交一笔卖单
+- 能通过查单确认订单状态
+- 能在有成交时通过查成交确认数量和均价
+- 所有数据都被转换成统一内部对象

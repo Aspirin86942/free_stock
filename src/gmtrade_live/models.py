@@ -53,7 +53,7 @@ class ConnectivityReport:
 
 @dataclass(frozen=True, slots=True)
 class OrderRequest:
-    """M1 手动卖单请求。"""
+    """M1 手工交易请求。"""
 
     symbol: str
     volume: int
@@ -130,15 +130,13 @@ class TradeReport:
     """M1 验证报告。"""
 
     account_id: str
+    side: str
     symbol: str
     requested_volume: int
     price_type: str
     submit_accepted: bool
     cl_ord_id: str | None
     broker_order_id: str | None
-    order_event_received: bool
-    execution_event_received: bool
-    callback_chain_closed: bool
     order_status_confirmed: bool
     execution_status_confirmed: bool
     last_order_status: str | None
