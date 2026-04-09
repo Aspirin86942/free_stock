@@ -25,6 +25,7 @@ M2 的核心验收标准：
 - 暂不可平仓持仓的显式输出
 - 连续轮询 dry-run 验证
 - 变化摘要与结构化日志
+- 对后续状态机或状态表可消费的稳定内部契约输出
 
 ### 2.2 M2 非范围（留给 M3）
 
@@ -88,6 +89,31 @@ M2 采用电平触发，而不是锁存触发。
 - 满足止损，但当前 `available_volume = 0`  
   `trigger_reason = "stop_loss_triggered"`  
   `block_reason = "temporarily_not_closable"`
+
+### 3.5 与查询驱动主线衔接
+
+当前项目统一采用：
+
+```text
+查询结果 -> 内部事件 -> 聚合/状态机
+```
+
+在这条主线上，`M2` 的职责不是产出执行查询事件，而是产出稳定的“决策事实”。
+
+- `DecisionResult` 表达单标的当前决策事实
+- `M2RoundReport` 表达轮次级别事实
+- `M2ChangeEvent` 表达变化级别事实
+
+后续 `M3` 或数据库状态表应统一消费两类内部事实：
+
+- 决策事实：`M2` 产出的决策结果与变化事件
+- 执行事实：`query_order_status()`、`query_execution_reports()` 整理出的内部事件
+
+因此：
+
+- `M2` 不依赖 callback 才能成立
+- `M2` 输出不能只被视为“CLI 打印内容”
+- CLI JSON 只是内部对象的外部投影
 
 ## 4. 核心语义
 
@@ -407,10 +433,13 @@ def run_m2_dry_run(
 
 ## 10. 输出策略
 
+`M2RoundReport` 和 `M2ChangeEvent` 是 `M2` 对内稳定契约。CLI 输出应与其保持一致，但不替代内部对象本身。
+
 ### 10.1 每轮摘要
 
 每轮固定输出摘要，至少包含：
 
+- `kind`
 - `round`
 - `session_state`
 - `position_count`
@@ -435,6 +464,28 @@ def run_m2_dry_run(
 - 标的进入 `tombstone`
 - 标的从 `tombstone` 被删除
 - `quote_missing` 的出现与恢复
+
+每条变化详情至少应能从 `event.decision` 和 `event.state_snapshot` 投影出以下字段：
+
+- `kind`
+- `symbol`
+- `change_tags`
+- `lifecycle_state`
+- `should_sell`
+- `can_submit_sell`
+- `trigger_reason`
+- `block_reason`
+- `volume`
+- `available_volume`
+- `sellable_now`
+- `current_price`
+- `session_state`
+- `evaluated_at`
+
+说明：
+
+- 当事件只对应墓碑态变化时，决策相关字段可为空
+- 只要内部对象完整，CLI 是否增删展示字段都不影响后续状态机消费
 
 ### 10.3 变化标签建议
 
@@ -528,6 +579,14 @@ def run_m2_dry_run(
 
 这些状态属于 M3 的执行态，不应直接承接 M2 主逻辑。M2 应新增独立的决策态状态管理实现，而不是复用执行态状态机。
 
+### 12.4 与 M1 / M3 的关系
+
+- `M1` 负责双向手工验证，输出的是“执行验证报告”
+- `M2` 负责核心决策 dry-run，输出的是“决策事实”
+- `M3` 负责自动卖出闭环，消费的是“决策事实 + 查询驱动的执行事实”
+
+三者当前都不把 callback 作为闭环成立的必要条件。
+
 ## 13. 完成定义
 
 M2 可视为完成，至少需要满足以下条件：
@@ -540,5 +599,5 @@ M2 可视为完成，至少需要满足以下条件：
 - 采用电平触发
 - 支持一轮墓碑态
 - 输出摘要稳定、变化详情可审计
+- 输出契约可直接供后续状态机或状态表消费
 - 测试可复现核心判断与状态演进
-

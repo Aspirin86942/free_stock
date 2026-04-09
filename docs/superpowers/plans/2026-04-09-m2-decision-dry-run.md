@@ -4,7 +4,7 @@
 
 **Goal:** 实现 `--mode m2` 连续 dry-run 能力，在不发单的前提下完成多标的内存决策态管理、止盈止损判断、可提交性判断和结构化输出。
 
-**Architecture:** M2 新增专用的决策态模型、`M2StateManager`、`M2DecisionEngine` 和 `M2DryRunService`。`main.py --mode m2` 通过现有的 query gateway 与 market gateway 读取持仓和行情，由 `run_m2_dry_run()` 驱动连续轮询；现有 `state.py` 保留给 M3 执行态，不直接承接 M2 主逻辑。
+**Architecture:** M2 新增专用的决策态模型、`M2StateManager`、`M2DecisionEngine` 和 `M2DryRunService`。`main.py --mode m2` 通过现有的 query gateway 与 market gateway 读取持仓和行情，由 `run_m2_dry_run()` 驱动连续轮询；现有 `state.py` 保留给 M3 执行态，不直接承接 M2 主逻辑。`M2RoundReport` 和 `M2ChangeEvent` 是对内稳定契约，后续状态机或状态表应消费这些对象或其规范化结果，CLI JSON 只是投影。
 
 **Tech Stack:** Python 3.10+, pytest, stdlib `argparse/json/logging/time/zoneinfo/dataclasses`, `Decimal`, 现有 `GMTradeQueryGateway`, `GMCurrentQuoteGateway`
 
@@ -35,6 +35,11 @@
 M2 只做：读取当前持仓 → 只查询持仓行情 → 连续 dry-run 评估 → 输出决策与状态快照。
 
 M2 不做：发单、未完成委托查询、防重复卖单正式逻辑、执行态更新、数据库持久化。
+
+补充约束：
+
+- M2 输出不是一次性调试文本，而是后续 M3 / 数据库可消费的决策事实
+- 不把 callback 作为 M2 或后续闭环成立的前提
 
 ---
 
@@ -1278,8 +1283,16 @@ def test_run_m2_dry_run_prints_summary_and_change_details(monkeypatch, capsys) -
             can_submit_sell=True,
             trigger_reason="take_profit_triggered",
             block_reason=None,
+            current_price=Decimal("10.80"),
+            session_state="trading",
+            evaluated_at=datetime(2026, 4, 9, 14, 30, tzinfo=ZoneInfo("Asia/Shanghai")),
         ),
-        state_snapshot=SimpleNamespace(lifecycle_state="watching"),
+        state_snapshot=SimpleNamespace(
+            lifecycle_state="watching",
+            volume=100,
+            available_volume=100,
+            sellable_now=True,
+        ),
     )
     report = SimpleNamespace(summary=summary, change_events=(change,))
 
@@ -1458,6 +1471,21 @@ def run_m2_dry_run(
                     if event.state_snapshot is not None
                     else None
                 ),
+                "volume": (
+                    event.state_snapshot.volume
+                    if event.state_snapshot is not None
+                    else None
+                ),
+                "available_volume": (
+                    event.state_snapshot.available_volume
+                    if event.state_snapshot is not None
+                    else None
+                ),
+                "sellable_now": (
+                    event.state_snapshot.sellable_now
+                    if event.state_snapshot is not None
+                    else None
+                ),
             }
             if event.decision is not None:
                 payload.update(
@@ -1466,6 +1494,9 @@ def run_m2_dry_run(
                         "can_submit_sell": event.decision.can_submit_sell,
                         "trigger_reason": event.decision.trigger_reason,
                         "block_reason": event.decision.block_reason,
+                        "current_price": str(event.decision.current_price),
+                        "session_state": event.decision.session_state,
+                        "evaluated_at": event.decision.evaluated_at.isoformat(),
                     }
                 )
             print(json.dumps(payload, ensure_ascii=False))
@@ -1564,6 +1595,7 @@ Spec 覆盖确认：
 - `--mode m2` CLI：Task 5
 - 摘要与变化详情输出：Task 4 + Task 5
 - M3 执行态隔离：Task 2 不复用 `state.py`
+- 输出契约可供后续状态机或状态表消费：Task 1 + Task 4 + Task 5
 
 占位符扫描：
 - 无 `TODO` / `TBD`
@@ -1574,6 +1606,7 @@ Spec 覆盖确认：
 - 生命周期类型统一为 `DecisionLifecycleState`
 - dry-run 编排输出统一为 `M2RoundReport`
 - 变化输出统一走 `M2ChangeEvent`
+- CLI 输出仅为内部契约投影，不另起第二套语义
 
 ---
 
