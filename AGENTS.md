@@ -44,6 +44,15 @@ conda run -n stock_analysis python main.py --config config/sim_account.yaml --mo
   --timeout-seconds 120
 ```
 
+### M2 决策 dry-run
+```bash
+# M2 决策 dry-run（单轮）
+conda run -n stock_analysis python main.py --config config/sim_account.yaml --mode m2 --once
+
+# M2 决策 dry-run（连续 3 轮）
+conda run -n stock_analysis python main.py --config config/sim_account.yaml --mode m2 --max-rounds 3
+```
+
 ### 测试
 ```bash
 # 运行所有测试
