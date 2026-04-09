@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
+from enum import Enum
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,3 +148,92 @@ class TradeReport:
     message: str
     started_at: datetime
     finished_at: datetime
+
+
+class DecisionLifecycleState(str, Enum):
+    """M2 决策态生命周期。"""
+
+    watching = "watching"
+    tombstone = "tombstone"
+
+
+@dataclass(frozen=True, slots=True)
+class DecisionResult:
+    """M2 单标的决策结果。"""
+
+    symbol: str
+    should_sell: bool
+    can_submit_sell: bool
+    trigger_reason: str | None
+    block_reason: str | None
+    current_price: Decimal
+    cost_price: Decimal
+    take_profit_price: Decimal
+    stop_loss_price: Decimal
+    volume: int
+    available_volume: int
+    sellable_now: bool
+    session_state: str
+    evaluated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class DecisionPositionStateSnapshot:
+    """M2 决策态快照。"""
+
+    symbol: str
+    lifecycle_state: DecisionLifecycleState
+    has_position: bool
+    sellable_now: bool
+    volume: int
+    available_volume: int
+    first_seen_at: datetime
+    last_seen_at: datetime
+    disappeared_at: datetime | None
+    tombstone_rounds: int
+    last_trigger_reason: str | None
+    last_block_reason: str | None
+    last_decision_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class EvaluatedSymbol:
+    """M2 单标的评估结果与状态快照。"""
+
+    decision: DecisionResult
+    state_snapshot: DecisionPositionStateSnapshot
+
+
+@dataclass(frozen=True, slots=True)
+class M2RoundSummary:
+    """M2 单轮摘要。"""
+
+    round_no: int
+    session_state: str
+    position_count: int
+    watching_count: int
+    tombstone_count: int
+    should_sell_count: int
+    can_submit_sell_count: int
+    changed_symbol_count: int
+    duration_ms: int
+
+
+@dataclass(frozen=True, slots=True)
+class M2ChangeEvent:
+    """M2 单标的变化事件。"""
+
+    symbol: str
+    change_tags: tuple[str, ...]
+    decision: DecisionResult | None
+    state_snapshot: DecisionPositionStateSnapshot | None
+
+
+@dataclass(frozen=True, slots=True)
+class M2RoundReport:
+    """M2 单轮输出。"""
+
+    summary: M2RoundSummary
+    evaluated_symbols: tuple[EvaluatedSymbol, ...]
+    tombstones: tuple[DecisionPositionStateSnapshot, ...]
+    change_events: tuple[M2ChangeEvent, ...]
