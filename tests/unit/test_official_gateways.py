@@ -3,26 +3,47 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
+import sys
+import types
 from zoneinfo import ZoneInfo
 
 import pytest
 
 from gmtrade_live.config import AppConfig
 from gmtrade_live.errors import ServiceError
+from gmtrade_live.gateways.callback_handler import CallbackHandler
 from gmtrade_live.gateways.gm_market_gateway import GMCurrentQuoteGateway
-from gmtrade_live.gateways.gmtrade_trade_gateway import GMTradeQueryGateway
+from gmtrade_live.gateways.gmtrade_trade_gateway import (
+    GMTradeQueryGateway,
+    _register_gm_callbacks,
+)
+from gmtrade_live.models import OrderRequest
 
 
 class FakeGMApi:
     def __init__(self) -> None:
         self.token = None
         self.serv_addr = None
+        self.account_id = None
+        self.order_callback = None
+        self.execution_report_callback = None
+        self.last_order_kwargs = None
 
     def set_token(self, token: str) -> None:
         self.token = token
 
     def set_serv_addr(self, addr: str) -> None:
         self.serv_addr = addr
+
+    def set_account_id(self, account_id: str) -> None:
+        self.account_id = account_id
+
+    def set_order_callback(self, callback) -> None:
+        self.order_callback = callback
+
+    def set_execution_report_callback(self, callback) -> None:
+        self.execution_report_callback = callback
 
     def get_cash(self, account_id: str | None = None) -> dict[str, object]:
         return {
@@ -66,6 +87,25 @@ class FakeGMApi:
                 ),
             }
             for symbol in symbols
+        ]
+
+    def order_volume(self, **kwargs: object) -> list[SimpleNamespace]:
+        self.last_order_kwargs = kwargs
+        return [
+            SimpleNamespace(
+                cl_ord_id="ORDER_1",
+                symbol=kwargs["symbol"],
+                status=1,
+                ord_rej_reason_detail="",
+                created_at=datetime(
+                    2026,
+                    4,
+                    9,
+                    10,
+                    6,
+                    tzinfo=ZoneInfo("Asia/Shanghai"),
+                ),
+            )
         ]
 
 
@@ -182,3 +222,183 @@ def test_gm_api_gateway_handles_missing_timestamp_fields() -> None:
     assert positions[0].available_volume == 251900
     assert positions[0].cost_price == Decimal("10.019")
     assert positions[0].last_update_time is not None  # 应该使用当前时间
+
+
+def test_gm_api_gateway_registers_callbacks_and_submits_order() -> None:
+    api = FakeGMApi()
+    gateway = GMTradeQueryGateway(api_module=api, account_id="demo-account")
+    config = _build_config()
+    logger = __import__("logging").getLogger("test")
+    handler = CallbackHandler(logger)
+
+    gateway.connect(config)
+    gateway.set_callback_handler(handler)
+    result = gateway.submit_order(
+        OrderRequest(
+            symbol="SHSE.600036",
+            volume=100,
+            side="sell",
+            price_type="market",
+            price=None,
+        )
+    )
+
+    assert api.token == "demo-token"
+    assert api.serv_addr == "api.myquant.cn:9000"
+    # connect() 不应在 M0/M1 查询链路里全局绑定账户，否则会把 gm SDK 全局状态带进后续调用。
+    assert api.account_id is None
+    assert api.order_callback == handler.on_order_status
+    assert api.execution_report_callback == handler.on_execution_report
+    assert api.last_order_kwargs is not None
+    assert api.last_order_kwargs["symbol"] == "SHSE.600036"
+    assert api.last_order_kwargs["volume"] == 100
+    assert api.last_order_kwargs["account"] == "demo-account"
+    assert result.accepted is True
+    assert result.cl_ord_id == "ORDER_1"
+    assert result.broker_order_id is None
+
+
+def test_gm_api_gateway_filters_order_status_by_cl_ord_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gateway = GMTradeQueryGateway(api_module=FakeGMApi(), account_id="demo-account")
+
+    monkeypatch.setattr(
+        "gmtrade_live.gateways.gmtrade_trade_gateway._fetch_orders",
+        lambda **kwargs: [
+            {
+                "cl_ord_id": "OTHER_ORDER",
+                "order_id": "BROKER_OLD",
+                "symbol": "SHSE.600036",
+                "status": 8,
+                "filled_volume": 0,
+                "volume": 100,
+                "ord_rej_reason_detail": "old_rejected",
+                "updated_at": datetime(
+                    2026,
+                    4,
+                    9,
+                    10,
+                    7,
+                    tzinfo=ZoneInfo("Asia/Shanghai"),
+                ),
+            },
+            {
+                "cl_ord_id": "ORDER_1",
+                "order_id": "BROKER_1",
+                "symbol": "SHSE.600036",
+                "status": 3,
+                "filled_volume": 100,
+                "volume": 100,
+                "ord_rej_reason_detail": "",
+                "updated_at": datetime(
+                    2026,
+                    4,
+                    9,
+                    10,
+                    8,
+                    tzinfo=ZoneInfo("Asia/Shanghai"),
+                ),
+            },
+        ],
+    )
+
+    snapshot = gateway.query_order_status("ORDER_1", "SHSE.600036")
+
+    assert snapshot is not None
+    assert snapshot.cl_ord_id == "ORDER_1"
+    assert snapshot.broker_order_id == "BROKER_1"
+    assert snapshot.status == "filled"
+    assert snapshot.rejection_reason is None
+
+
+def test_gm_api_gateway_filters_execution_reports_by_cl_ord_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    gateway = GMTradeQueryGateway(api_module=FakeGMApi(), account_id="demo-account")
+
+    monkeypatch.setattr(
+        "gmtrade_live.gateways.gmtrade_trade_gateway._fetch_execution_reports",
+        lambda **kwargs: [
+            {
+                "cl_ord_id": "ORDER_1",
+                "order_id": "BROKER_1",
+                "symbol": "SHSE.600036",
+                "volume": 100,
+                "price": 10.45,
+                "created_at": datetime(
+                    2026,
+                    4,
+                    9,
+                    10,
+                    8,
+                    tzinfo=ZoneInfo("Asia/Shanghai"),
+                ),
+            },
+            {
+                "cl_ord_id": "OTHER_ORDER",
+                "order_id": "BROKER_OLD",
+                "symbol": "SHSE.600839",
+                "volume": 100,
+                "price": 8.70,
+                "created_at": datetime(
+                    2026,
+                    4,
+                    9,
+                    10,
+                    7,
+                    tzinfo=ZoneInfo("Asia/Shanghai"),
+                ),
+            },
+        ],
+    )
+
+    snapshots = gateway.query_execution_reports("ORDER_1")
+
+    assert len(snapshots) == 1
+    assert snapshots[0].cl_ord_id == "ORDER_1"
+    assert snapshots[0].broker_order_id == "BROKER_1"
+    assert snapshots[0].symbol == "SHSE.600036"
+    assert snapshots[0].filled_volume == 100
+    assert snapshots[0].avg_price == Decimal("10.450")
+
+
+def test_register_gm_callbacks_initializes_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: dict[str, object] = {}
+    fake_context = SimpleNamespace(
+        on_order_status_fun=None,
+        on_execution_report_fun=None,
+        mode=None,
+        strategy_id="",
+    )
+    fake_callback_module = types.SimpleNamespace(callback_controller="controller")
+    fake_c_sdk_module = types.SimpleNamespace(
+        py_gmi_set_data_callback=lambda callback: calls.setdefault(
+            "data_callback",
+            callback,
+        ),
+        py_gmi_set_strategy_id=lambda strategy_id: calls.setdefault(
+            "strategy_id",
+            strategy_id,
+        ),
+        gmi_init=lambda: calls.setdefault("gmi_init", 0),
+        gmi_set_mode=lambda mode: calls.setdefault("mode", mode),
+    )
+    fake_storage_module = types.SimpleNamespace(context=fake_context)
+    fake_errors_module = types.SimpleNamespace(check_gm_status=lambda status: status)
+
+    monkeypatch.setitem(sys.modules, "gm.callback", fake_callback_module)
+    monkeypatch.setitem(sys.modules, "gm.csdk.c_sdk", fake_c_sdk_module)
+    monkeypatch.setitem(sys.modules, "gm.model.storage", fake_storage_module)
+    monkeypatch.setitem(sys.modules, "gm.api._errors", fake_errors_module)
+
+    handler = CallbackHandler(__import__("logging").getLogger("test"))
+    _register_gm_callbacks(handler)
+
+    assert fake_context.on_order_status_fun == handler.on_order_status
+    assert fake_context.on_execution_report_fun == handler.on_execution_report
+    assert calls["data_callback"] == "controller"
+    assert calls["gmi_init"] == 0
+    assert calls["strategy_id"] == b"m1_manual_trade"

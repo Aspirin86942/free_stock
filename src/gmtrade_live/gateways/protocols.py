@@ -3,7 +3,15 @@ from __future__ import annotations
 from typing import Protocol
 
 from gmtrade_live.config import AppConfig
-from gmtrade_live.models import CashSnapshot, PositionSnapshot, QuoteSnapshot
+from gmtrade_live.models import (
+    CashSnapshot,
+    OrderExecutionSnapshot,
+    OrderRequest,
+    OrderStatusSnapshot,
+    OrderSubmitResult,
+    PositionSnapshot,
+    QuoteSnapshot,
+)
 
 
 class TradeGateway(Protocol):
@@ -14,6 +22,18 @@ class TradeGateway(Protocol):
         ...
 
     def get_positions(self, account_id: str) -> list[PositionSnapshot]:
+        ...
+
+    def submit_order(self, request: OrderRequest) -> OrderSubmitResult:
+        ...
+
+    def query_order_status(self, cl_ord_id: str, symbol: str) -> OrderStatusSnapshot | None:
+        ...
+
+    def query_execution_reports(self, cl_ord_id: str) -> tuple[OrderExecutionSnapshot, ...]:
+        ...
+
+    def poll_callbacks(self) -> None:
         ...
 
 

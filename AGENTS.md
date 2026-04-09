@@ -14,31 +14,49 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 ## 开发命令
 
+### 执行环境
+
+- 默认使用 conda 环境：`stock_analysis`
+- 安装、运行、测试、lint、格式化、类型检查，优先使用 `conda run -n stock_analysis ...`
+- 非项目明确要求时，不混用系统 Python、其他 conda 环境或独立 `.venv`
+
 ### 安装与运行
 ```bash
 # 安装项目（开发模式）
-pip install -e .
+conda run -n stock_analysis python -m pip install -e .
 
 # 运行主程序（需要先启动掘金终端）
-python main.py --config config/sim_account.yaml
+conda run -n stock_analysis python main.py --config config/sim_account.yaml
 
 # 验证掘金 API 连接
-python scripts/verify_gm_api.py
+conda run -n stock_analysis python scripts/verify_gm_api.py
+```
+
+### M1 手动验证
+```bash
+# M1 市价单验证
+conda run -n stock_analysis python main.py --config config/sim_account.yaml --mode m1 \
+  --symbol SHSE.600036 --volume 100 --price-type market --timeout-seconds 60
+
+# M1 限价单验证
+conda run -n stock_analysis python main.py --config config/sim_account.yaml --mode m1 \
+  --symbol SHSE.600036 --volume 100 --price-type limit --price 10.50 \
+  --timeout-seconds 120
 ```
 
 ### 测试
 ```bash
 # 运行所有测试
-pytest
+conda run -n stock_analysis pytest
 
 # 运行单个测试文件
-pytest tests/unit/test_config.py
+conda run -n stock_analysis pytest tests/unit/test_config.py
 
 # 运行单个测试函数
-pytest tests/unit/test_config.py::test_load_config_success
+conda run -n stock_analysis pytest tests/unit/test_config.py::test_load_config_success
 
 # 集成测试（需要掘金终端运行）
-pytest tests/integration/
+conda run -n stock_analysis pytest tests/integration/
 ```
 
 ### 配置文件
@@ -111,7 +129,7 @@ pytest tests/integration/
 
 运行 M0 验证：
 ```bash
-python main.py --config config/sim_account.yaml
+conda run -n stock_analysis python main.py --config config/sim_account.yaml
 # 预期输出：JSON 格式的账户摘要（account_id, available_cash, position_count, quote_count）
 ```
 
@@ -123,7 +141,7 @@ python main.py --config config/sim_account.yaml
 
 ### 运行时错误
 1. **ModuleNotFoundError: No module named 'gmtrade_live'**
-   - 解决：运行 `pip install -e .`
+   - 解决：运行 `conda run -n stock_analysis python -m pip install -e .`
 
 2. **GmError: 无法获取掘金服务器地址列表**
    - 原因：掘金终端未运行或 `gmtrade_endpoint` 配置错误
@@ -131,7 +149,7 @@ python main.py --config config/sim_account.yaml
 
 3. **usage: main.py [-h] --config CONFIG**
    - 原因：未指定配置文件
-   - 解决：`python main.py --config config/sim_account.yaml`
+   - 解决：`conda run -n stock_analysis python main.py --config config/sim_account.yaml`
 
 ## 文档参考
 

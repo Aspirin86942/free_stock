@@ -2,11 +2,27 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 实现 M1 里程碑 - 手动触发卖单、提交委托、接收回报（委托状态 + 成交）、输出验证报告的完整链路。
+**Goal:** 实现 M1 里程碑 - 手动触发卖单、提交委托、确认最终状态（回调可选、查询必需）、输出验证报告的完整链路。
 
-**Architecture:** 在 M0 基础上增加：(1) 回调处理器（转换 SDK 回报为内部事件并入队）；(2) 交易网关扩展（提交委托 + 注册回调）；(3) 手动验证服务（同步等待两类回报）；(4) CLI 扩展（支持 M1 模式）。单线程顺序处理模型：SDK 回调只做转换和入队，业务线程同步从 Queue 拉取事件。
+**Architecture:** 在 M0 基础上增加：(1) 回调处理器（转换 SDK 回报为内部事件并入队，作为观测增强）；(2) 交易网关扩展（提交委托 + 注册回调 + 主动查单/查成交）；(3) 手动验证服务（同步消费 Queue，并轮询查询最终状态）；(4) CLI 扩展（支持 M1 模式）。单线程顺序处理模型：SDK 回调只做转换和入队，业务线程同步从 Queue 拉取事件并主动查单收口。
 
 **Tech Stack:** Python 3.10+, gm==3.0.183, PyYAML, pytest, stdlib logging/decimal/zoneinfo/queue（`threading` 仅用于测试桩模拟 SDK 异步回调）
+
+## 2026-04-09 实施校正
+
+基于真实仿真环境验证，本计划作如下校正：
+
+- 掘金 SDK 回调在真实环境中未稳定送达到本地 `CallbackHandler`，因此 **M1 不再以“双回调都到达”作为闭环标准**
+- M1 的成功标准改为 **提交成功后，能够通过主动查单/查成交确认最终状态**
+- `callback_chain_closed` 仅作为观测字段，表示“委托状态回调 + 成交回调都真实收到”，**不是** `verification_passed` 的前置条件
+- 若文档后续分步骤示例仍出现“等待两类回报全部到达才算成功”的表述，以本节校正为准
+
+校正后的成功规则：
+
+- `submit_accepted=True` 且订单终态为 `rejected`、`cancelled`、`expired`、`done_for_day`、`stopped` 时，M1 可判定成功
+- `submit_accepted=True` 且订单终态为 `filled` 时，必须同时确认成交明细，M1 才判定成功
+- `submitted`、`pending_new`、`partially_filled` 等非终态，即使查到了状态，也不算成功
+- 若终态已确认但回调未收齐，报告应写为 `交易状态已确认，但回调链路未闭环`
 
 ---
 
@@ -33,7 +49,7 @@
 
 ## Scope Guard
 
-M1 只做：手动触发卖单 → 提交委托 → 接收回报 → 验证报告。
+M1 只做：手动触发卖单 → 提交委托 → 接收回调（若有）→ 主动查询最终状态 → 验证报告。
 
 M1 不做：自动卖出、止盈止损、卖出许可、防重复卖单、状态机收口、更新 PositionStateManager、成交后重查账户。
 
@@ -262,12 +278,12 @@ def test_trade_report_success():
         last_order_status="filled",
         filled_volume=100,
         avg_price=Decimal("10.45"),
-        success=True,
+        verification_passed=True,
         message="M1 verification completed successfully",
         started_at=now,
         finished_at=now,
     )
-    assert report.success is True
+    assert report.verification_passed is True
     assert report.order_event_received is True
     assert report.execution_event_received is True
 
@@ -286,12 +302,12 @@ def test_trade_report_timeout():
         last_order_status="submitted",
         filled_volume=0,
         avg_price=None,
-        success=False,
+        verification_passed=False,
         message="missing_execution_event",
         started_at=now,
         finished_at=now,
     )
-    assert report.success is False
+    assert report.verification_passed is False
     assert report.message == "missing_execution_event"
 ```
 
@@ -319,7 +335,7 @@ class TradeReport:
     last_order_status: str | None
     filled_volume: int              # 累计成交量（本次验证期间）
     avg_price: Decimal | None       # 最后一次成交回报的均价
-    success: bool                   # 两类回报都收到才为 True
+    verification_passed: bool       # 最终交易状态是否已确认
     message: str
     started_at: datetime
     finished_at: datetime
@@ -964,7 +980,7 @@ from gmtrade_live.models import OrderRequest, OrderSubmitResult, OrderEvent, Exe
 from gmtrade_live.gateways.callback_handler import CallbackHandler
 
 def test_manual_trade_service_success():
-    """测试验证成功场景：两类回报都收到"""
+    """测试验证成功场景：回调闭环或主动查询确认终态"""
     logger = logging.getLogger("test")
     
     # Mock gateway
@@ -1031,7 +1047,7 @@ def test_manual_trade_service_success():
     
     thread.join()
     
-    assert report.success is True
+    assert report.verification_passed is True
     assert report.order_event_received is True
     assert report.execution_event_received is True
     assert report.filled_volume == 100
@@ -1226,7 +1242,7 @@ def _wait_for_callbacks(
                     event.avg_price,
                 )
             
-            # 成功条件：两类回报都收到
+            # 成功条件：最终状态已确认
             if order_event_received and execution_event_received:
                 finished_at = datetime.now(tz=ZoneInfo(config.timezone))
                 self._logger.info(
@@ -1246,7 +1262,7 @@ def _wait_for_callbacks(
                     last_order_status=last_order_status,
                     filled_volume=filled_volume,
                     avg_price=avg_price,
-                    success=True,
+                    verification_passed=True,
                     message="M1 verification completed successfully",
                     started_at=started_at,
                     finished_at=finished_at,
@@ -1298,7 +1314,7 @@ def _build_submit_failed_report(
         last_order_status=None,
         filled_volume=0,
         avg_price=None,
-        success=False,
+        verification_passed=False,
         message=f"Order submission rejected: {submit_result.message}",
         started_at=started_at,
         finished_at=finished_at,
@@ -1349,7 +1365,7 @@ def _build_timeout_report(
         last_order_status=last_order_status,
         filled_volume=filled_volume,
         avg_price=avg_price,
-        success=False,
+        verification_passed=False,
         message=message,
         started_at=started_at,
         finished_at=finished_at,
@@ -1420,7 +1436,7 @@ def test_manual_trade_service_timeout_missing_execution():
     
     thread.join()
     
-    assert report.success is False
+    assert report.verification_passed is False
     assert report.order_event_received is True
     assert report.execution_event_received is False
     assert report.message == "missing_execution_event"
@@ -1692,7 +1708,7 @@ def run_m1_manual_trade(
     print(
         json.dumps(
             {
-                "success": report.success,
+                "verification_passed": report.verification_passed,
                 "order_id": report.order_id,
                 "submit_accepted": report.submit_accepted,
                 "order_event_received": report.order_event_received,
@@ -1705,7 +1721,7 @@ def run_m1_manual_trade(
         )
     )
     
-    return 0 if report.success else 1
+    return 0 if report.verification_passed else 1
 ```
 
 - [ ] **Step 6: 运行 M0 测试验证不回退**
@@ -1849,7 +1865,7 @@ def test_manual_trade_service_out_of_order_events():
     thread.join()
     
     # 乱序不影响成功
-    assert report.success is True
+    assert report.verification_passed is True
     assert report.order_event_received is True
     assert report.execution_event_received is True
 ```
@@ -1928,7 +1944,7 @@ def test_manual_trade_service_multiple_execution_events():
     
     thread.join()
     
-    assert report.success is True
+    assert report.verification_passed is True
     assert report.filled_volume == 100  # 50 + 50
     assert report.avg_price == Decimal("10.50")  # 最后一次
 ```
@@ -2016,7 +2032,7 @@ def test_manual_trade_service_ignore_mismatched_order_id():
     
     thread.join()
     
-    assert report.success is True
+    assert report.verification_passed is True
     assert report.avg_price == Decimal("10.45")  # 不是旧订单的 9.00
 ```
 
@@ -2143,7 +2159,7 @@ def test_m1_manual_trade_fake_sdk_integration() -> None:
         timeout_seconds=5,
     )
 
-    assert report.success is True
+    assert report.verification_passed is True
     assert report.order_event_received is True
     assert report.execution_event_received is True
     assert report.filled_volume == 100
@@ -2201,7 +2217,7 @@ conda run -n stock_analysis python main.py --config config/sim_account.yaml --mo
 
 Expected:
 - 在账户具备对应可卖持仓、掘金终端运行且交易时段正常时，退出码为 `0`
-- 标准输出为 JSON 报告，且 `success=true`
+- 标准输出为 JSON 报告，且 `verification_passed=true`
 - 日志中包含 `order_submit_result`、`order_callback_received`、`execution_callback_received`、`m1_manual_trade_success`
 
 If the preconditions are not met:
@@ -2228,7 +2244,7 @@ conda run -n stock_analysis python main.py --config config/sim_account.yaml --mo
 预期输出：JSON 格式的验证报告
 ```json
 {
-  "success": true,
+  "verification_passed": true,
   "order_id": "123456",
   "submit_accepted": true,
   "order_event_received": true,
@@ -2276,7 +2292,7 @@ M1 实施计划已完成。所有任务都包含：
 1. **单线程模型**：回调只做转换和入队，业务线程同步消费
 2. **事件匹配**：依赖 `clear_queue()` + `order_id`，不使用本地时间硬过滤回报
 3. **累计逻辑**：filled_volume 累加，avg_price 取最后一次
-4. **超时区分**：missing_order_event, missing_execution_event, missing_both_events
+4. **收口优先级**：主动查询确认最终状态优先，回调只做观测增强；未确认时再区分 missing_order_event / missing_execution_event / missing_both_events
 5. **M0 兼容**：所有 M0 功能保持不变
 
 下一步：选择执行方式（Subagent-Driven 或 Inline Execution）。

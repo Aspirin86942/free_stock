@@ -1,5 +1,9 @@
 # M1 手动卖单委托-回报链路设计
 
+> 2026-04-09 实施校正：
+> 真实仿真环境验证表明，掘金 SDK 回调未稳定送达到本地 `CallbackHandler`。
+> 因此 M1 的闭环标准已调整为“主动查单/查成交确认最终状态”，回调仅保留为观测增强字段，不再作为成功前提。
+
 ## 1. 目标
 
 实现 M1 里程碑："数据接入跑通 - 账户、持仓、行情、委托、回报链路可稳定调用"。
@@ -7,8 +11,8 @@
 M1 的核心验收标准：
 - 能手动发起一笔卖单请求
 - 能提交委托并获得同步结果
-- 能接收并映射委托状态回报
-- 能接收并映射成交回报
+- 能注册并接收委托状态回报、成交回报（若 SDK 实际推送）
+- 能主动查询委托最终状态与成交明细
 - 能输出结构化验证报告
 - 保持 M0 现有能力不回退
 
@@ -19,7 +23,7 @@ M1 的核心验收标准：
 - 手动触发卖单（通过 CLI 参数）
 - 委托提交接口实现
 - 回调注册与事件转换
-- 同步等待回报（委托状态 + 成交）
+- 同步等待回调并主动轮询委托状态/成交明细
 - 输出验证报告
 
 ### 2.2 M1 非范围（留给 M2/M3）
@@ -43,11 +47,11 @@ ManualTradeService 验证参数
   ↓
 GMTradeGateway.submit_order() 提交委托
   ↓
-掘金 SDK 回调 → CallbackHandler 转换事件 → 放入 Queue
+掘金 SDK 回调（可选）→ CallbackHandler 转换事件 → 放入 Queue
   ↓
-ManualTradeService 在同一线程中同步从 Queue 拉取事件
+ManualTradeService 在同一线程中同步消费 Queue，并定期主动查单
   ↓
-等待收到：委托状态回报 + 成交回报（带超时）
+查到终态后，如有需要继续补查成交明细
   ↓
 输出 TradeReport（不更新业务状态，不重查账户）
 ```
@@ -61,14 +65,18 @@ ManualTradeService 在同一线程中同步从 Queue 拉取事件
 
 ### 3.3 成功标准
 
-M1 验证成功的充要条件：
-```
+M1 验证成功的判定改为“最终状态已确认”，而不是“回调双到达”：
+
+```text
 submit_accepted = True
-AND order_event_received = True
-AND execution_event_received = True
+AND final_state_confirmed = True
 ```
 
-任一条件不满足，均为失败。
+其中：
+- `rejected`、`cancelled`、`expired`、`done_for_day`、`stopped` 等终态，只要查单已确认，即可视为 M1 成功
+- `filled` 必须同时确认成交明细（数量、价格），才视为 M1 成功
+- `submitted`、`pending_new`、`partially_filled` 等非终态，即使查到状态，也不视为成功
+- `callback_chain_closed` 仅表示“委托状态回报 + 成交回报都实际收到”，是观测指标，不再是成功前提
 
 ## 4. 数据模型设计
 
@@ -137,22 +145,28 @@ class TradeReport:
     requested_volume: int
     price_type: str
     submit_accepted: bool
-    order_id: str | None
+    cl_ord_id: str | None
+    broker_order_id: str | None
     order_event_received: bool      # 是否收到委托状态回报
     execution_event_received: bool  # 是否收到成交回报
+    callback_chain_closed: bool     # 两类回调是否都实际收到
+    order_status_confirmed: bool    # 是否已通过回调或查单确认委托状态
+    execution_status_confirmed: bool  # 是否已通过回调或查成交确认成交明细
     last_order_status: str | None
-    filled_volume: int              # 累计成交量（本次验证期间）
-    avg_price: Decimal | None       # 最后一次成交回报的均价
-    success: bool                   # 两类回报都收到才为 True
+    rejection_reason: str | None
+    filled_volume: int
+    avg_price: Decimal | None
+    verification_passed: bool       # 最终状态是否已确认
     message: str
     started_at: datetime
     finished_at: datetime
 ```
 
 **说明**：
-- `filled_volume` 是本次验证期间、同一 `order_id` 的累计成交量
-- `avg_price` 是最后一次 `ExecutionEvent` 的均价（M1 不做加权平均）
-- 如果收到多次成交回报，累加 `filled_volume`，但 `avg_price` 只保留最后一次
+- `cl_ord_id` 与 `broker_order_id` 分开保留，便于审计与问题排查
+- `callback_chain_closed` 用于体现 SDK 回调链路是否真的闭合
+- `verification_passed` 表示最终交易状态是否已确认，不再等价于“收到两类回调”
+- 如果收到多次成交回报，`filled_volume` 按同一订单累计，`avg_price` 保留最后一次回报或最后一次查成交结果
 
 ## 5. 组件设计
 
@@ -245,22 +259,24 @@ GMTradeGateway = GMTradeQueryGateway
 3. 清空 `CallbackHandler` 的事件队列（避免历史脏事件）
 4. 调用 `submit_order()`
 5. 若同步提交失败，直接生成失败 `TradeReport`
-6. 若同步提交成功，在同一线程中进入"等待回报"循环
-7. 从 `CallbackHandler.event_queue` 同步拉取事件（`queue.get(timeout=1.0)`）
-8. 事件匹配规则：
+6. 若同步提交成功，在同一线程中进入"等待确认"循环
+7. 从 `CallbackHandler.event_queue` 同步拉取事件（`queue.get(timeout<=0.2)`）
+8. 定期主动调用 `query_order_status()`；若状态为 `filled`，继续调用 `query_execution_reports()`
+9. 事件匹配规则：
    - 必须 `order_id` 匹配
    - 必须 `event_time >= started_at`（忽略历史事件）
    - 不匹配的事件记录日志后忽略
-9. 累计逻辑：
+10. 累计逻辑：
    - 收到 `OrderEvent`：标记 `order_event_received = True`，更新 `last_order_status`
    - 收到 `ExecutionEvent`：标记 `execution_event_received = True`，累加 `filled_volume`，更新 `avg_price`
-10. 成功条件：同时收到委托状态回报 + 成交回报
-11. 超时条件：基于"总截止时间"（`started_at + timeout_seconds`），而不是每次 `queue.get()` 的独立超时
-12. 超时报告必须明确区分：
-    - `missing_order_event`（只收到成交回报）
-    - `missing_execution_event`（只收到委托状态回报）
-    - `missing_both_events`（两类回报都未收到）
-13. 输出结构化 `TradeReport`
+11. 一旦查单确认终态，立即结束等待，不白等完整 `timeout_seconds`
+12. 超时条件：基于"总截止时间"（`started_at + timeout_seconds`），而不是每次 `queue.get()` 的独立超时
+13. 报告文案需区分：
+    - `交易状态已确认，但回调链路未闭环`（终态已确认，但回调未收齐）
+    - `委托已成交，但成交明细未确认`
+    - `委托状态已确认但尚未到终态: <status>`
+    - `missing_order_event` / `missing_execution_event` / `missing_both_events`
+14. 输出结构化 `TradeReport`
 
 **核心接口**：
 ```python
@@ -317,14 +333,19 @@ python main.py --config config/sim_account.yaml --mode m1 \
 JSON 格式的验证报告：
 ```json
 {
-  "success": true,
-  "order_id": "123456",
+  "verification_passed": true,
+  "cl_ord_id": "123456",
+  "broker_order_id": "654321",
   "submit_accepted": true,
-  "order_event_received": true,
-  "execution_event_received": true,
+  "order_event_received": false,
+  "execution_event_received": false,
+  "callback_chain_closed": false,
+  "order_status_confirmed": true,
+  "execution_status_confirmed": true,
+  "last_order_status": "filled",
   "filled_volume": 100,
   "avg_price": "10.45",
-  "message": "M1 verification completed successfully"
+  "message": "交易状态已确认，但回调链路未闭环"
 }
 ```
 
@@ -339,7 +360,10 @@ JSON 格式的验证报告：
 - `execution_callback_received` - 收到成交回调
 - `order_event_matched` - 委托状态回报匹配成功
 - `execution_event_matched` - 成交回报匹配成功
+- `order_status_reconciled` - 主动查单得到委托状态
+- `execution_status_reconciled` - 主动查成交得到成交明细
 - `m1_manual_trade_success` - 验证成功
+- `m1_manual_trade_query_closed` - 通过主动查询确认闭环
 - `m1_manual_trade_timeout` - 等待超时
 - `m1_manual_trade_failed` - 验证失败
 - `order_callback_error` - 回调处理异常
@@ -372,10 +396,10 @@ JSON 格式的验证报告：
 
 ### 8.4 超时错误
 
-- 未收到委托状态回报 → `TradeReport.order_event_received = False`，`message = "missing_order_event"`
-- 未收到成交回报 → `TradeReport.execution_event_received = False`，`message = "missing_execution_event"`
-- 两类回报都未收到 → 两个标志都为 `False`，`message = "missing_both_events"`
-- 超时报告中明确说明缺少哪类回报
+- 若主动查询已确认终态，但回调未收齐 → `verification_passed = True`，`message = "交易状态已确认，但回调链路未闭环"`
+- 若已确认 `filled`，但成交明细仍未确认 → `verification_passed = False`，`message = "委托已成交，但成交明细未确认"`
+- 若仅确认到 `submitted` / `partially_filled` 等非终态 → `verification_passed = False`，`message = "委托状态已确认但尚未到终态: <status>"`
+- 若既无回调也无查询结果 → 使用 `missing_order_event`、`missing_execution_event`、`missing_both_events` 区分缺失情况
 
 ## 9. 测试策略
 
@@ -384,7 +408,7 @@ JSON 格式的验证报告：
 - `main.py` 参数解析测试（M0/M1 模式切换）
 - 模型转换测试（SDK 对象 → 内部事件）
 - `CallbackHandler` 入队测试（使用假回调对象）
-- `ManualTradeService` 成功场景测试（两类回报都收到）
+- `ManualTradeService` 成功场景测试（双回调闭环 或 主动查询确认终态）
 - `ManualTradeService` 超时场景测试（只收到一类回报）
 - `ManualTradeService` 提交失败场景测试
 - **回报乱序测试**：成交回报先于委托状态回报到达
@@ -403,7 +427,8 @@ JSON 格式的验证报告：
 
 - 在掘金仿真账户中执行真实卖单
 - **优先使用市价单或可立即成交的限价单**（避免长期挂单导致的假失败）
-- 验证委托状态回报和成交回报都能收到
+- 验证主动查单和查成交能确认最终状态
+- 记录回调是否真实到达；若未到达，不影响 M1 成功判定
 - 验证日志完整性和可审计性
 
 ## 10. 实施计划
@@ -450,8 +475,10 @@ M1 完成的充要条件：
 1. **功能完整性**：
    - CLI 支持 `--mode m1` 和所有 M1 参数
    - 能提交市价单和限价单
-   - 能接收委托状态回报和成交回报
+   - 能注册并观测委托状态回报和成交回报（若 SDK 实际推送）
+   - 能主动查询委托最终状态与成交明细
    - 能输出结构化验证报告
+   - 报告中能区分 `callback_chain_closed` 与 `verification_passed`
 
 2. **测试覆盖**：
    - 单元测试覆盖所有核心逻辑
@@ -478,9 +505,10 @@ M1 完成的充要条件：
 ### 12.1 已知风险
 
 1. **回调时序不确定**：成交回报可能先于委托状态回报到达（已通过乱序测试覆盖）
-2. **部分成交场景**：M1 只验证"收到回报"，不处理部分成交逻辑（累加 `filled_volume` 但不判断是否完全成交）
-3. **网络延迟**：超时时间需要根据实际环境调整
-4. **限价单挂单风险**：限价单可能长期无法成交，导致超时（真实验证优先使用市价单）
+2. **回调可靠性不足**：真实仿真环境中，SDK 回调可能根本不送达本地处理器，因此 M1 已改为以主动查询收口
+3. **部分成交场景**：M1 只做状态确认，不做后续业务状态机收口；`partially_filled` 仍视为未完成终态
+4. **网络延迟**：超时时间需要根据实际环境调整
+5. **限价单挂单风险**：限价单可能长期无法成交，导致超时（真实验证优先使用市价单）
 
 ### 12.2 M1 限制
 
