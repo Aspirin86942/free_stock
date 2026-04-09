@@ -145,6 +145,7 @@ def test_main_dispatches_to_m0(monkeypatch: pytest.MonkeyPatch) -> None:
     bootstrap = SimpleNamespace(
         run_m0_connectivity_check=_run_m0_connectivity_check,
         run_m1_manual_trade=lambda **kwargs: 1,
+        run_m2_dry_run=lambda **kwargs: 1,
     )
 
     monkeypatch.setitem(sys.modules, "gmtrade_live.bootstrap", bootstrap)
@@ -168,6 +169,7 @@ def test_main_dispatches_to_m1(monkeypatch: pytest.MonkeyPatch) -> None:
     bootstrap = SimpleNamespace(
         run_m0_connectivity_check=lambda config_path: 1,
         run_m1_manual_trade=_run_m1_manual_trade,
+        run_m2_dry_run=lambda **kwargs: 1,
     )
 
     monkeypatch.setitem(sys.modules, "gmtrade_live.bootstrap", bootstrap)
@@ -203,3 +205,56 @@ def test_main_dispatches_to_m1(monkeypatch: pytest.MonkeyPatch) -> None:
     assert captured["price"] == Decimal("10.50")
     assert captured["timeout_seconds"] == 120
     assert captured["side"] == "sell"
+
+
+def test_parse_cli_args_accepts_m2_once_mode() -> None:
+    args = main.parse_cli_args(
+        [
+            "--config",
+            "config/sim_account.yaml",
+            "--mode",
+            "m2",
+            "--once",
+        ]
+    )
+
+    assert args.mode == "m2"
+    assert args.once is True
+    assert args.max_rounds is None
+
+
+def test_parse_cli_args_rejects_once_outside_m2() -> None:
+    with pytest.raises(SystemExit):
+        main.parse_cli_args(
+            [
+                "--config",
+                "config/sim_account.yaml",
+                "--once",
+            ]
+        )
+
+
+def test_main_dispatches_to_m2(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    def _run_m2_dry_run(**kwargs: object) -> int:
+        captured.update(kwargs)
+        return 0
+
+    bootstrap = SimpleNamespace(
+        run_m0_connectivity_check=lambda config_path: 1,
+        run_m1_manual_trade=lambda **kwargs: 1,
+        run_m2_dry_run=_run_m2_dry_run,
+    )
+
+    monkeypatch.setitem(sys.modules, "gmtrade_live.bootstrap", bootstrap)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["main.py", "--config", "config/sim_account.yaml", "--mode", "m2", "--max-rounds", "3"],
+    )
+
+    assert main.main() == 0
+    assert captured["config_path"] == Path("config/sim_account.yaml")
+    assert captured["once"] is False
+    assert captured["max_rounds"] == 3

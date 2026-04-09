@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+from datetime import datetime
 from decimal import Decimal
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from zoneinfo import ZoneInfo
 
 import gmtrade_live.bootstrap as bootstrap
 
@@ -173,3 +175,78 @@ def test_run_m1_manual_trade_returns_nonzero_when_verification_failed(
     assert service_instance is not None
     assert service_instance.last_run_kwargs is not None
     assert service_instance.last_run_kwargs["side"] == "sell"
+
+
+def test_run_m2_dry_run_prints_summary_and_change_details(monkeypatch, capsys) -> None:
+    config = _fake_config()
+    config.poll_interval_seconds = 5
+    config.trade_session_start = "09:30:00"
+    config.trade_session_end = "15:00:00"
+    summary = SimpleNamespace(
+        round_no=1,
+        session_state="trading",
+        position_count=1,
+        watching_count=1,
+        tombstone_count=0,
+        should_sell_count=1,
+        can_submit_sell_count=1,
+        changed_symbol_count=1,
+        duration_ms=8,
+    )
+    change = SimpleNamespace(
+        symbol="SHSE.600036",
+        change_tags=("trigger_activated",),
+        decision=SimpleNamespace(
+            should_sell=True,
+            can_submit_sell=True,
+            trigger_reason="take_profit_triggered",
+            block_reason=None,
+            current_price=Decimal("10.80"),
+            session_state="trading",
+            evaluated_at=datetime(2026, 4, 9, 14, 30, tzinfo=ZoneInfo("Asia/Shanghai")),
+        ),
+        state_snapshot=SimpleNamespace(
+            lifecycle_state="watching",
+            volume=100,
+            available_volume=100,
+            sellable_now=True,
+        ),
+    )
+    report = SimpleNamespace(summary=summary, change_events=(change,))
+
+    class FakeGateway:
+        def connect(self, *args, **kwargs) -> None:
+            return None
+
+    class FakeService:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+        def run_round(self, **kwargs):
+            return report
+
+    monkeypatch.setattr(bootstrap, "load_config", lambda path: config)
+    monkeypatch.setattr(
+        bootstrap,
+        "setup_logging",
+        lambda *args, **kwargs: SimpleNamespace(
+            info=lambda *a, **k: None,
+            warning=lambda *a, **k: None,
+        ),
+    )
+    monkeypatch.setattr(bootstrap, "GMTradeQueryGateway", lambda: FakeGateway())
+    monkeypatch.setattr(bootstrap, "GMCurrentQuoteGateway", lambda: FakeGateway())
+    monkeypatch.setattr(bootstrap, "M2StateManager", lambda logger: SimpleNamespace())
+    monkeypatch.setattr(bootstrap, "M2DecisionEngine", lambda: SimpleNamespace())
+    monkeypatch.setattr(bootstrap, "M2DryRunService", FakeService)
+
+    exit_code = bootstrap.run_m2_dry_run(
+        config_path=Path("config/sim_account.yaml"),
+        once=True,
+        max_rounds=None,
+    )
+
+    lines = [line for line in capsys.readouterr().out.splitlines() if line]
+    assert exit_code == 0
+    assert '"kind": "m2_round_summary"' in lines[0]
+    assert '"kind": "m2_change_detail"' in lines[1]
