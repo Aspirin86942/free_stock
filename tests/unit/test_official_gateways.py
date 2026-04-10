@@ -129,6 +129,23 @@ class FakeGMApiNoTimestamp(FakeGMApi):
         ]
 
 
+class FakeGMApiIntradayStockPosition(FakeGMApi):
+    """模拟 A 股当日买入、可平总仓位和当前可卖数量不一致的持仓。"""
+
+    def get_position(self, account_id: str | None = None) -> list[dict[str, object]]:
+        return [
+            {
+                "symbol": "SHSE.688188",
+                "volume": 10000,
+                "volume_today": 10000,
+                "available": 10000,
+                "available_today": 10000,
+                "available_now": 0,
+                "vwap": 141.200,
+            }
+        ]
+
+
 def _build_config() -> AppConfig:
     return AppConfig(
         account_id="demo-account",
@@ -214,6 +231,21 @@ def test_gm_api_gateway_handles_missing_timestamp_fields() -> None:
     assert positions[0].available_volume == 251900
     assert positions[0].cost_price == Decimal("10.019")
     assert positions[0].last_update_time is not None  # 应该使用当前时间
+
+
+def test_gm_api_gateway_prefers_available_now_for_intraday_stock_positions() -> None:
+    """A 股当日买入不能卖出时，应优先使用 available_now 作为当前可卖数量。"""
+    api = FakeGMApiIntradayStockPosition()
+    gateway = GMTradeQueryGateway(api_module=api)
+    config = _build_config()
+
+    gateway.connect(config)
+    positions = gateway.get_positions(config.account_id)
+
+    assert len(positions) == 1
+    assert positions[0].symbol == "SHSE.688188"
+    assert positions[0].volume == 10000
+    assert positions[0].available_volume == 0
 
 
 def test_gm_api_gateway_submits_order_via_query_driven_path() -> None:

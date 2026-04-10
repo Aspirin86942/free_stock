@@ -79,8 +79,9 @@ class GMTradeQueryGateway:
             row = _coerce_record(row)
             symbol = str(_pick(row, "symbol"))
             volume = int(_pick(row, "volume"))
+            # 对 A 股现货，available 可能只是“可平总仓位”，当日新买仓位要看 available_now 才能知道当前是否真能卖出。
             available_volume = int(
-                _pick(row, "available", "available_now", "available_volume")
+                _pick(row, "available_now", "available", "available_volume")
             )
             cost_per_share = _resolve_cost_per_share(row, volume)
             results.append(
