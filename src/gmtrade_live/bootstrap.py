@@ -18,7 +18,9 @@ from gmtrade_live.services.m1_manual_trade import ManualTradeService
 from gmtrade_live.services.m2_decision_engine import M2DecisionEngine
 from gmtrade_live.services.m2_dry_run import M2DryRunService
 from gmtrade_live.services.m2_state_manager import M2StateManager
+from gmtrade_live.services.m3_execution_service import M3ExecutionService
 from gmtrade_live.session import resolve_trading_session
+from gmtrade_live.state import PositionStateManager
 
 
 def _resolve_current_session_state(config) -> object:
@@ -243,5 +245,132 @@ def run_m2_dry_run(
                     report.summary.duration_ms,
                     config.poll_interval_seconds,
                 )
+        time.sleep(config.poll_interval_seconds)
+        round_no += 1
+
+
+def run_m3_execution(
+    *,
+    config_path: Path,
+    once: bool,
+    max_rounds: int | None,
+) -> int:
+    """执行 M3 自动卖出闭环并输出结构化结果。"""
+    config = load_config(config_path)
+    _resolve_current_session_state(config)
+    logger = setup_logging(config.strategy_name, config.log_dir)
+    trade_gateway = GMTradeGateway()
+    market_gateway = GMCurrentQuoteGateway()
+
+    trade_gateway.connect(config)
+    market_gateway.connect(config.token)
+
+    service = M3ExecutionService(
+        trade_gateway=trade_gateway,
+        market_gateway=market_gateway,
+        state_manager=PositionStateManager(logger),
+        decision_engine=M2DecisionEngine(),
+        logger=logger,
+    )
+
+    round_no = 1
+    while True:
+        try:
+            report = service.run_round(config=config, round_no=round_no)
+        except Exception as exc:
+            # M3 是真实执行链路，单轮异常直接中止，避免在不确定状态下继续发单。
+            logger.error(
+                "m3_round_failed round=%s error_type=%s error=%s",
+                round_no,
+                type(exc).__name__,
+                str(exc),
+                exc_info=True,
+            )
+            print(
+                json.dumps(
+                    {
+                        "kind": "m3_round_error",
+                        "round": round_no,
+                        "error_type": type(exc).__name__,
+                        "message": str(exc),
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            return 1
+
+        print(
+            json.dumps(
+                {
+                    "kind": "m3_round_summary",
+                    "round": report.summary.round_no,
+                    "session_state": report.summary.session_state,
+                    "position_count": report.summary.position_count,
+                    "candidate_count": report.summary.candidate_count,
+                    "blocked_count": report.summary.blocked_count,
+                    "submitted_count": report.summary.submitted_count,
+                    "open_order_count": report.summary.open_order_count,
+                    "changed_symbol_count": report.summary.changed_symbol_count,
+                    "duration_ms": report.summary.duration_ms,
+                },
+                ensure_ascii=False,
+            )
+        )
+        for block in report.block_details:
+            print(
+                json.dumps(
+                    {
+                        "kind": "m3_block_detail",
+                        "symbol": block.symbol,
+                        "trigger_reason": block.trigger_reason,
+                        "requested_ratio": str(block.requested_ratio),
+                        "total_volume": block.total_volume,
+                        "available_volume": block.available_volume,
+                        "raw_target_volume": block.raw_target_volume,
+                        "promotion_type": block.promotion_type,
+                        "normalized_target_volume": block.normalized_target_volume,
+                        "block_reason": block.block_reason,
+                        "evaluated_at": block.evaluated_at.isoformat(),
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        for detail in report.execution_details:
+            print(
+                json.dumps(
+                    {
+                        "kind": "m3_execution_detail",
+                        "symbol": detail.symbol,
+                        "change_tags": list(detail.change_tags),
+                        "execution_state": detail.execution_state,
+                        "cl_ord_id": detail.cl_ord_id,
+                        "broker_order_id": detail.broker_order_id,
+                        "requested_volume": detail.requested_volume,
+                        "filled_volume": detail.filled_volume,
+                        "remaining_volume": detail.remaining_volume,
+                        "submit_accepted": detail.submit_accepted,
+                        "last_order_status": detail.last_order_status,
+                        "rejection_reason": detail.rejection_reason,
+                        "avg_price": (
+                            str(detail.avg_price)
+                            if detail.avg_price is not None
+                            else None
+                        ),
+                        "event_time": detail.event_time.isoformat(),
+                        "message": detail.message,
+                    },
+                    ensure_ascii=False,
+                )
+            )
+
+        if once or (max_rounds is not None and round_no >= max_rounds):
+            return 0
+        if report.summary.duration_ms > config.poll_interval_seconds * 1000:
+            logger.warning(
+                "round_overrun round=%s duration_ms=%s interval_seconds=%s",
+                round_no,
+                report.summary.duration_ms,
+                config.poll_interval_seconds,
+            )
         time.sleep(config.poll_interval_seconds)
         round_no += 1

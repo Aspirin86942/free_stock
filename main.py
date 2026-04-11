@@ -33,10 +33,10 @@ def _parse_positive_decimal(value: str) -> Decimal:
 def build_parser() -> argparse.ArgumentParser:
     """构建基础 CLI 参数。"""
     parser = argparse.ArgumentParser(
-        description="GMTrade connectivity, M1 manual trade, and M2 decision dry-run"
+        description="GMTrade connectivity, M1 manual trade, M2 decision dry-run, and M3 auto sell execution"
     )
     parser.add_argument("--config", required=True, help="Path to YAML config file")
-    parser.add_argument("--mode", choices=("m0", "m1", "m2"), default="m0")
+    parser.add_argument("--mode", choices=("m0", "m1", "m2", "m3"), default="m0")
     parser.set_defaults(
         symbol=None,
         volume=None,
@@ -60,7 +60,7 @@ def build_parser_for_mode(mode: str) -> argparse.ArgumentParser:
         parser.add_argument("--side", choices=("buy", "sell"), required=True)
         return parser
 
-    if mode == "m2":
+    if mode in {"m2", "m3"}:
         group = parser.add_mutually_exclusive_group()
         group.add_argument("--once", action="store_true")
         group.add_argument("--max-rounds", type=_parse_positive_int)
@@ -92,12 +92,13 @@ def parse_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
 
 def main() -> int:
-    """根据模式选择连通性检查、M1 或 M2。"""
+    """根据模式选择 M0/M1/M2/M3。"""
     args = parse_cli_args()
     from gmtrade_live.bootstrap import (
         run_m0_connectivity_check,
         run_m1_manual_trade,
         run_m2_dry_run,
+        run_m3_execution,
     )
 
     config_path = Path(args.config)
@@ -113,6 +114,12 @@ def main() -> int:
         )
     if args.mode == "m2":
         return run_m2_dry_run(
+            config_path=config_path,
+            once=args.once,
+            max_rounds=args.max_rounds,
+        )
+    if args.mode == "m3":
+        return run_m3_execution(
             config_path=config_path,
             once=args.once,
             max_rounds=args.max_rounds,

@@ -17,6 +17,8 @@ def _fake_config() -> SimpleNamespace:
         account_id="demo-account",
         strategy_name="gmtrade-live-m1",
         log_dir=Path("logs"),
+        poll_interval_seconds=5,
+        sell_quantity_ratio=Decimal("1.0"),
         token="demo-token",
         timezone="Asia/Shanghai",
         gmtrade_endpoint="127.0.0.1:7001",
@@ -336,3 +338,153 @@ def test_run_m1_manual_trade_rejects_unimplemented_market_session_mode(monkeypat
         )
 
     assert exc_info.value.code == "session.mode_not_implemented"
+
+
+def test_run_m3_execution_prints_summary_block_and_execution_details(
+    monkeypatch,
+    capsys,
+) -> None:
+    config = _fake_config()
+    report = SimpleNamespace(
+        summary=SimpleNamespace(
+            round_no=1,
+            session_state="trading",
+            position_count=2,
+            candidate_count=1,
+            blocked_count=1,
+            submitted_count=1,
+            open_order_count=1,
+            changed_symbol_count=2,
+            duration_ms=12,
+        ),
+        block_details=(
+            SimpleNamespace(
+                symbol="SHSE.600000",
+                trigger_reason="take_profit_triggered",
+                requested_ratio=Decimal("1.0"),
+                total_volume=100,
+                available_volume=0,
+                raw_target_volume=100,
+                promotion_type=None,
+                normalized_target_volume=100,
+                block_reason="sell_quantity_exceeds_available",
+                evaluated_at=datetime(
+                    2026,
+                    4,
+                    10,
+                    10,
+                    0,
+                    tzinfo=ZoneInfo("Asia/Shanghai"),
+                ),
+            ),
+        ),
+        execution_details=(
+            SimpleNamespace(
+                symbol="SHSE.600036",
+                change_tags=("submit_accepted", "order_status_updated"),
+                execution_state="submitted",
+                cl_ord_id="CL_1",
+                broker_order_id="BK_1",
+                requested_volume=200,
+                filled_volume=0,
+                remaining_volume=200,
+                submit_accepted=True,
+                last_order_status="submitted",
+                rejection_reason=None,
+                avg_price=None,
+                event_time=datetime(
+                    2026,
+                    4,
+                    10,
+                    10,
+                    0,
+                    tzinfo=ZoneInfo("Asia/Shanghai"),
+                ),
+                message="accepted",
+            ),
+        ),
+    )
+
+    class FakeGateway:
+        def connect(self, *args, **kwargs) -> None:
+            return None
+
+    class FakeService:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+        def run_round(self, **kwargs):
+            return report
+
+    monkeypatch.setattr(bootstrap, "load_config", lambda path: config)
+    monkeypatch.setattr(
+        bootstrap,
+        "setup_logging",
+        lambda *args, **kwargs: SimpleNamespace(
+            info=lambda *a, **k: None,
+            warning=lambda *a, **k: None,
+            error=lambda *a, **k: None,
+        ),
+    )
+    monkeypatch.setattr(bootstrap, "GMTradeGateway", lambda: FakeGateway())
+    monkeypatch.setattr(bootstrap, "GMCurrentQuoteGateway", lambda: FakeGateway())
+    monkeypatch.setattr(bootstrap, "PositionStateManager", lambda logger: SimpleNamespace())
+    monkeypatch.setattr(bootstrap, "M2DecisionEngine", lambda: SimpleNamespace())
+    monkeypatch.setattr(bootstrap, "M3ExecutionService", FakeService)
+
+    exit_code = bootstrap.run_m3_execution(
+        config_path=Path("config/sim_account.yaml"),
+        once=True,
+        max_rounds=None,
+    )
+
+    lines = [line for line in capsys.readouterr().out.splitlines() if line]
+    assert exit_code == 0
+    assert '"kind": "m3_round_summary"' in lines[0]
+    assert '"kind": "m3_block_detail"' in lines[1]
+    assert '"kind": "m3_execution_detail"' in lines[2]
+
+
+def test_run_m3_execution_returns_nonzero_when_round_raises(
+    monkeypatch,
+    capsys,
+) -> None:
+    config = _fake_config()
+
+    class FakeGateway:
+        def connect(self, *args, **kwargs) -> None:
+            return None
+
+    class FakeService:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+        def run_round(self, **kwargs):
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(bootstrap, "load_config", lambda path: config)
+    monkeypatch.setattr(
+        bootstrap,
+        "setup_logging",
+        lambda *args, **kwargs: SimpleNamespace(
+            info=lambda *a, **k: None,
+            warning=lambda *a, **k: None,
+            error=lambda *a, **k: None,
+        ),
+    )
+    monkeypatch.setattr(bootstrap, "GMTradeGateway", lambda: FakeGateway())
+    monkeypatch.setattr(bootstrap, "GMCurrentQuoteGateway", lambda: FakeGateway())
+    monkeypatch.setattr(bootstrap, "PositionStateManager", lambda logger: SimpleNamespace())
+    monkeypatch.setattr(bootstrap, "M2DecisionEngine", lambda: SimpleNamespace())
+    monkeypatch.setattr(bootstrap, "M3ExecutionService", FakeService)
+
+    exit_code = bootstrap.run_m3_execution(
+        config_path=Path("config/sim_account.yaml"),
+        once=True,
+        max_rounds=None,
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 1
+    assert payload["kind"] == "m3_round_error"
+    assert payload["message"] == "boom"
