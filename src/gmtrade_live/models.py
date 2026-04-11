@@ -258,7 +258,15 @@ class M3BlockDetail:
     """单标的执行前阻断详情。"""
 
     symbol: str
-    trigger_reason: str | None
+    decision_lifecycle_state: str | None
+    decision_should_sell: bool
+    decision_can_submit_sell: bool
+    decision_trigger_reason: str | None
+    decision_block_reason: str | None
+    execution_state: str | None
+    execution_cl_ord_id: str | None
+    execution_broker_order_id: str | None
+    execution_last_order_status: str | None
     requested_ratio: Decimal
     total_volume: int
     available_volume: int
@@ -275,6 +283,11 @@ class M3ExecutionDetail:
 
     symbol: str
     change_tags: tuple[str, ...]
+    decision_lifecycle_state: str | None
+    decision_should_sell: bool
+    decision_can_submit_sell: bool
+    decision_trigger_reason: str | None
+    decision_block_reason: str | None
     execution_state: str
     cl_ord_id: str | None
     broker_order_id: str | None

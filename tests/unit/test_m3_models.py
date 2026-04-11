@@ -49,7 +49,15 @@ def test_m3_round_report_exposes_block_and_execution_details() -> None:
         block_details=(
             M3BlockDetail(
                 symbol="SHSE.600036",
-                trigger_reason="take_profit_triggered",
+                decision_lifecycle_state="watching",
+                decision_should_sell=True,
+                decision_can_submit_sell=True,
+                decision_trigger_reason="take_profit_triggered",
+                decision_block_reason=None,
+                execution_state="failed",
+                execution_cl_ord_id="CL_OLD",
+                execution_broker_order_id="BK_OLD",
+                execution_last_order_status="rejected",
                 requested_ratio=Decimal("0.80"),
                 total_volume=250,
                 available_volume=201,
@@ -64,6 +72,11 @@ def test_m3_round_report_exposes_block_and_execution_details() -> None:
             M3ExecutionDetail(
                 symbol="SHSE.600036",
                 change_tags=("submit_accepted",),
+                decision_lifecycle_state="watching",
+                decision_should_sell=True,
+                decision_can_submit_sell=True,
+                decision_trigger_reason="take_profit_triggered",
+                decision_block_reason=None,
                 execution_state="submitted",
                 cl_ord_id="CL_1",
                 broker_order_id="BK_1",
@@ -81,5 +94,7 @@ def test_m3_round_report_exposes_block_and_execution_details() -> None:
     )
 
     assert report.summary.submitted_count == 1
+    assert report.block_details[0].decision_lifecycle_state == "watching"
     assert report.block_details[0].block_reason == "sell_quantity_exceeds_available"
+    assert report.execution_details[0].decision_trigger_reason == "take_profit_triggered"
     assert report.execution_details[0].cl_ord_id == "CL_1"
