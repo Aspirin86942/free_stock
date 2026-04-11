@@ -21,6 +21,15 @@ from gmtrade_live.services.m2_state_manager import M2StateManager
 from gmtrade_live.session import resolve_trading_session
 
 
+def _resolve_current_session_state(config) -> object:
+    """统一校验市场时段模式；未实现模式应在所有入口一致拦截。"""
+    return resolve_trading_session(
+        datetime.now(tz=ZoneInfo(config.timezone)),
+        timezone_name=config.timezone,
+        market_session_mode=config.market_session_mode,
+    )
+
+
 def run_m0_connectivity_check(config_path: Path) -> int:
     """执行 M0 连通性检查并输出精简 JSON 摘要。"""
     config = load_config(config_path)
@@ -28,12 +37,7 @@ def run_m0_connectivity_check(config_path: Path) -> int:
 
     logger.info("heartbeat round=1 status=starting config=%s", config_path)
 
-    session_state = resolve_trading_session(
-        datetime.now(tz=ZoneInfo(config.timezone)),
-        start_text=config.trade_session_start,
-        end_text=config.trade_session_end,
-        timezone_name=config.timezone,
-    )
+    session_state = _resolve_current_session_state(config)
 
     service = ConnectivityCheckService(
         trade_gateway=GMTradeQueryGateway(),
@@ -75,6 +79,7 @@ def run_m1_manual_trade(
 ) -> int:
     """执行 M1 手工交易验证并输出最终交易报告。"""
     config = load_config(config_path)
+    _resolve_current_session_state(config)
     logger = setup_logging(config.strategy_name, config.log_dir)
     gateway = GMTradeQueryGateway(account_id=config.account_id)
 
@@ -108,7 +113,9 @@ def run_m1_manual_trade(
                 "last_order_status": report.last_order_status,
                 "rejection_reason": report.rejection_reason,
                 "filled_volume": report.filled_volume,
-                "avg_price": str(report.avg_price) if report.avg_price is not None else None,
+                "avg_price": (
+                    str(report.avg_price) if report.avg_price is not None else None
+                ),
                 "message": report.message,
             },
             ensure_ascii=False,
@@ -125,6 +132,7 @@ def run_m2_dry_run(
 ) -> int:
     """执行 M2 决策 dry-run 并输出结构化结果。"""
     config = load_config(config_path)
+    _resolve_current_session_state(config)
     logger = setup_logging(config.strategy_name, config.log_dir)
     trade_gateway = GMTradeQueryGateway()
     market_gateway = GMCurrentQuoteGateway()
@@ -142,75 +150,98 @@ def run_m2_dry_run(
 
     round_no = 1
     while True:
-        report = service.run_round(config=config, round_no=round_no)
-        print(
-            json.dumps(
-                {
-                    "kind": "m2_round_summary",
-                    "round": report.summary.round_no,
-                    "session_state": report.summary.session_state,
-                    "position_count": report.summary.position_count,
-                    "watching_count": report.summary.watching_count,
-                    "tombstone_count": report.summary.tombstone_count,
-                    "should_sell_count": report.summary.should_sell_count,
-                    "can_submit_sell_count": report.summary.can_submit_sell_count,
-                    "changed_symbol_count": report.summary.changed_symbol_count,
-                    "duration_ms": report.summary.duration_ms,
-                },
-                ensure_ascii=False,
-            )
-        )
-        for event in report.change_events:
-            lifecycle_state = None
-            if event.state_snapshot is not None:
-                lifecycle_state = getattr(
-                    event.state_snapshot.lifecycle_state,
-                    "value",
-                    event.state_snapshot.lifecycle_state,
-                )
-            payload = {
-                "kind": "m2_change_detail",
-                "symbol": event.symbol,
-                "change_tags": list(event.change_tags),
-                "lifecycle_state": lifecycle_state,
-                "volume": (
-                    event.state_snapshot.volume
-                    if event.state_snapshot is not None
-                    else None
-                ),
-                "available_volume": (
-                    event.state_snapshot.available_volume
-                    if event.state_snapshot is not None
-                    else None
-                ),
-                "sellable_now": (
-                    event.state_snapshot.sellable_now
-                    if event.state_snapshot is not None
-                    else None
-                ),
-            }
-            if event.decision is not None:
-                payload.update(
-                    {
-                        "should_sell": event.decision.should_sell,
-                        "can_submit_sell": event.decision.can_submit_sell,
-                        "trigger_reason": event.decision.trigger_reason,
-                        "block_reason": event.decision.block_reason,
-                        "current_price": str(event.decision.current_price),
-                        "session_state": event.decision.session_state,
-                        "evaluated_at": event.decision.evaluated_at.isoformat(),
-                    }
-                )
-            print(json.dumps(payload, ensure_ascii=False))
-
-        if once or (max_rounds is not None and round_no >= max_rounds):
-            return 0
-        if report.summary.duration_ms > config.poll_interval_seconds * 1000:
-            logger.warning(
-                "round_overrun round=%s duration_ms=%s interval_seconds=%s",
+        try:
+            report = service.run_round(config=config, round_no=round_no)
+        except Exception as exc:
+            logger.error(
+                "m2_round_failed round=%s error_type=%s error=%s",
                 round_no,
-                report.summary.duration_ms,
-                config.poll_interval_seconds,
+                type(exc).__name__,
+                str(exc),
+                exc_info=True,
             )
+            print(
+                json.dumps(
+                    {
+                        "kind": "m2_round_error",
+                        "round": round_no,
+                        "error_type": type(exc).__name__,
+                        "message": str(exc),
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            if once or (max_rounds is not None and round_no >= max_rounds):
+                return 1
+        else:
+            print(
+                json.dumps(
+                    {
+                        "kind": "m2_round_summary",
+                        "round": report.summary.round_no,
+                        "session_state": report.summary.session_state,
+                        "position_count": report.summary.position_count,
+                        "watching_count": report.summary.watching_count,
+                        "tombstone_count": report.summary.tombstone_count,
+                        "should_sell_count": report.summary.should_sell_count,
+                        "can_submit_sell_count": report.summary.can_submit_sell_count,
+                        "changed_symbol_count": report.summary.changed_symbol_count,
+                        "duration_ms": report.summary.duration_ms,
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            for event in report.change_events:
+                lifecycle_state = None
+                if event.state_snapshot is not None:
+                    lifecycle_state = getattr(
+                        event.state_snapshot.lifecycle_state,
+                        "value",
+                        event.state_snapshot.lifecycle_state,
+                    )
+                payload = {
+                    "kind": "m2_change_detail",
+                    "symbol": event.symbol,
+                    "change_tags": list(event.change_tags),
+                    "lifecycle_state": lifecycle_state,
+                    "volume": (
+                        event.state_snapshot.volume
+                        if event.state_snapshot is not None
+                        else None
+                    ),
+                    "available_volume": (
+                        event.state_snapshot.available_volume
+                        if event.state_snapshot is not None
+                        else None
+                    ),
+                    "sellable_now": (
+                        event.state_snapshot.sellable_now
+                        if event.state_snapshot is not None
+                        else None
+                    ),
+                }
+                if event.decision is not None:
+                    payload.update(
+                        {
+                            "should_sell": event.decision.should_sell,
+                            "can_submit_sell": event.decision.can_submit_sell,
+                            "trigger_reason": event.decision.trigger_reason,
+                            "block_reason": event.decision.block_reason,
+                            "current_price": str(event.decision.current_price),
+                            "session_state": event.decision.session_state,
+                            "evaluated_at": event.decision.evaluated_at.isoformat(),
+                        }
+                    )
+                print(json.dumps(payload, ensure_ascii=False))
+
+            if once or (max_rounds is not None and round_no >= max_rounds):
+                return 0
+            if report.summary.duration_ms > config.poll_interval_seconds * 1000:
+                logger.warning(
+                    "round_overrun round=%s duration_ms=%s interval_seconds=%s",
+                    round_no,
+                    report.summary.duration_ms,
+                    config.poll_interval_seconds,
+                )
         time.sleep(config.poll_interval_seconds)
         round_no += 1

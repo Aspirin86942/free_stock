@@ -23,8 +23,7 @@ def test_load_config_reads_and_resolves_environment_values(
                 "poll_interval_seconds: 5",
                 "take_profit_ratio: '0.05'",
                 "stop_loss_ratio: '0.03'",
-                "trade_session_start: '09:30:00'",
-                "trade_session_end: '15:00:00'",
+                "market_session_mode: a_share",
                 "log_dir: logs",
                 "timezone: Asia/Shanghai",
                 "gmtrade_endpoint: api.myquant.cn:9000",
@@ -40,6 +39,7 @@ def test_load_config_reads_and_resolves_environment_values(
     assert config.token == "demo-token"
     assert config.take_profit_ratio == Decimal("0.05")
     assert config.stop_loss_ratio == Decimal("0.03")
+    assert config.market_session_mode == "a_share"
 
 
 def test_load_config_rejects_missing_required_field(tmp_path: Path) -> None:
@@ -51,3 +51,49 @@ def test_load_config_rejects_missing_required_field(tmp_path: Path) -> None:
 
     assert exc_info.value.code == "config.missing_field"
     assert exc_info.value.retryable is False
+
+
+def test_load_config_defaults_gmtrade_endpoint_to_local_terminal(tmp_path: Path) -> None:
+    config_file = tmp_path / "sim_account.yaml"
+    config_file.write_text(
+        "\n".join(
+            [
+                "account_id: demo-account",
+                "token: demo-token",
+                "strategy_name: gmtrade-live-m0",
+                "poll_interval_seconds: 5",
+                "take_profit_ratio: '0.05'",
+                "stop_loss_ratio: '0.03'",
+                "market_session_mode: a_share",
+                "log_dir: logs",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_config(config_file)
+
+    assert config.gmtrade_endpoint == "127.0.0.1:7001"
+
+
+def test_load_config_accepts_futures_placeholder_mode(tmp_path: Path) -> None:
+    config_file = tmp_path / "sim_account.yaml"
+    config_file.write_text(
+        "\n".join(
+            [
+                "account_id: demo-account",
+                "token: demo-token",
+                "strategy_name: gmtrade-live-m0",
+                "poll_interval_seconds: 5",
+                "take_profit_ratio: '0.05'",
+                "stop_loss_ratio: '0.03'",
+                "market_session_mode: futures_placeholder",
+                "log_dir: logs",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_config(config_file)
+
+    assert config.market_session_mode == "futures_placeholder"

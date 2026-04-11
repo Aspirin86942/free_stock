@@ -5,9 +5,11 @@ from decimal import Decimal
 import json
 from pathlib import Path
 from types import SimpleNamespace
+import pytest
 from zoneinfo import ZoneInfo
 
 import gmtrade_live.bootstrap as bootstrap
+from gmtrade_live.errors import ServiceError
 
 
 def _fake_config() -> SimpleNamespace:
@@ -18,6 +20,7 @@ def _fake_config() -> SimpleNamespace:
         token="demo-token",
         timezone="Asia/Shanghai",
         gmtrade_endpoint="127.0.0.1:7001",
+        market_session_mode="a_share",
     )
 
 
@@ -180,8 +183,6 @@ def test_run_m1_manual_trade_returns_nonzero_when_verification_failed(
 def test_run_m2_dry_run_prints_summary_and_change_details(monkeypatch, capsys) -> None:
     config = _fake_config()
     config.poll_interval_seconds = 5
-    config.trade_session_start = "09:30:00"
-    config.trade_session_end = "15:00:00"
     summary = SimpleNamespace(
         round_no=1,
         session_state="trading",
@@ -250,3 +251,88 @@ def test_run_m2_dry_run_prints_summary_and_change_details(monkeypatch, capsys) -
     assert exit_code == 0
     assert '"kind": "m2_round_summary"' in lines[0]
     assert '"kind": "m2_change_detail"' in lines[1]
+
+
+def test_run_m2_dry_run_logs_and_continues_after_round_exception(monkeypatch, capsys) -> None:
+    config = _fake_config()
+    config.poll_interval_seconds = 5
+    logger_calls: list[str] = []
+
+    summary = SimpleNamespace(
+        round_no=2,
+        session_state="trading",
+        position_count=1,
+        watching_count=1,
+        tombstone_count=0,
+        should_sell_count=1,
+        can_submit_sell_count=1,
+        changed_symbol_count=0,
+        duration_ms=8,
+    )
+    report = SimpleNamespace(summary=summary, change_events=())
+
+    class FakeGateway:
+        def connect(self, *args, **kwargs) -> None:
+            return None
+
+    class FakeService:
+        def __init__(self, **kwargs) -> None:
+            self.calls = 0
+
+        def run_round(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise RuntimeError("boom")
+            return report
+
+    monkeypatch.setattr(bootstrap, "load_config", lambda path: config)
+    monkeypatch.setattr(
+        bootstrap,
+        "setup_logging",
+        lambda *args, **kwargs: SimpleNamespace(
+            info=lambda *a, **k: None,
+            warning=lambda *a, **k: None,
+            error=lambda message, *a, **k: logger_calls.append(message % a if a else message),
+        ),
+    )
+    monkeypatch.setattr(bootstrap, "GMTradeQueryGateway", lambda: FakeGateway())
+    monkeypatch.setattr(bootstrap, "GMCurrentQuoteGateway", lambda: FakeGateway())
+    monkeypatch.setattr(bootstrap, "M2StateManager", lambda logger: SimpleNamespace())
+    monkeypatch.setattr(bootstrap, "M2DecisionEngine", lambda: SimpleNamespace())
+    monkeypatch.setattr(bootstrap, "M2DryRunService", FakeService)
+    sleep_calls: list[int] = []
+    monkeypatch.setattr(bootstrap.time, "sleep", lambda seconds: sleep_calls.append(seconds))
+
+    exit_code = bootstrap.run_m2_dry_run(
+        config_path=Path("config/sim_account.yaml"),
+        once=False,
+        max_rounds=2,
+    )
+
+    lines = [line for line in capsys.readouterr().out.splitlines() if line]
+    assert exit_code == 0
+    assert '"kind": "m2_round_error"' in lines[0]
+    assert '"kind": "m2_round_summary"' in lines[1]
+    assert any("m2_round_failed" in call for call in logger_calls)
+    assert sleep_calls == [5]
+
+
+def test_run_m1_manual_trade_rejects_unimplemented_market_session_mode(monkeypatch) -> None:
+    config = _fake_config()
+    config.market_session_mode = "futures_placeholder"
+
+    monkeypatch.setattr(bootstrap, "load_config", lambda path: config)
+    monkeypatch.setattr(bootstrap, "setup_logging", lambda *args, **kwargs: SimpleNamespace())
+
+    with pytest.raises(ServiceError) as exc_info:
+        bootstrap.run_m1_manual_trade(
+            config_path=Path("config/sim_account.yaml"),
+            symbol="SHSE.600036",
+            volume=100,
+            price_type="market",
+            price=None,
+            timeout_seconds=60,
+            side="sell",
+        )
+
+    assert exc_info.value.code == "session.mode_not_implemented"

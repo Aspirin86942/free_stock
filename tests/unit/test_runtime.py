@@ -1,8 +1,10 @@
 from datetime import datetime
 from pathlib import Path
+import pytest
 from zoneinfo import ZoneInfo
 
 from gmtrade_live.logging_setup import setup_logging
+from gmtrade_live.errors import ServiceError
 from gmtrade_live.session import TradingSessionState, resolve_trading_session
 
 
@@ -18,9 +20,43 @@ def test_resolve_trading_session_returns_closed_day_on_saturday() -> None:
 
     state = resolve_trading_session(
         saturday,
-        start_text="09:30:00",
-        end_text="15:00:00",
         timezone_name="Asia/Shanghai",
+        market_session_mode="a_share",
     )
 
     assert state is TradingSessionState.CLOSED_DAY
+
+
+@pytest.mark.parametrize(
+    ("moment", "expected_state"),
+    [
+        (datetime(2026, 4, 10, 9, 29, tzinfo=ZoneInfo("Asia/Shanghai")), TradingSessionState.PRE_OPEN),
+        (datetime(2026, 4, 10, 10, 0, tzinfo=ZoneInfo("Asia/Shanghai")), TradingSessionState.TRADING),
+        (datetime(2026, 4, 10, 11, 45, tzinfo=ZoneInfo("Asia/Shanghai")), TradingSessionState.PRE_OPEN),
+        (datetime(2026, 4, 10, 13, 30, tzinfo=ZoneInfo("Asia/Shanghai")), TradingSessionState.TRADING),
+        (datetime(2026, 4, 10, 14, 58, tzinfo=ZoneInfo("Asia/Shanghai")), TradingSessionState.POST_CLOSE),
+        (datetime(2026, 4, 10, 15, 1, tzinfo=ZoneInfo("Asia/Shanghai")), TradingSessionState.POST_CLOSE),
+    ],
+)
+def test_resolve_trading_session_matches_a_share_schedule(
+    moment: datetime,
+    expected_state: TradingSessionState,
+) -> None:
+    state = resolve_trading_session(
+        moment,
+        timezone_name="Asia/Shanghai",
+        market_session_mode="a_share",
+    )
+
+    assert state is expected_state
+
+
+def test_resolve_trading_session_rejects_unimplemented_market_session_mode() -> None:
+    with pytest.raises(ServiceError) as exc_info:
+        resolve_trading_session(
+            datetime(2026, 4, 10, 10, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+            timezone_name="Asia/Shanghai",
+            market_session_mode="futures_placeholder",
+        )
+
+    assert exc_info.value.code == "session.mode_not_implemented"

@@ -48,9 +48,8 @@ class M2DryRunService:
         now = self._clock()
         session_state = resolve_trading_session(
             now,
-            start_text=config.trade_session_start,
-            end_text=config.trade_session_end,
             timezone_name=config.timezone,
+            market_session_mode=config.market_session_mode,
         )
 
         positions = tuple(

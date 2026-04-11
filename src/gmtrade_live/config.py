@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import time
 from decimal import Decimal, InvalidOperation
 import os
 from pathlib import Path
@@ -31,8 +30,7 @@ class AppConfig:
     poll_interval_seconds: int
     take_profit_ratio: Decimal
     stop_loss_ratio: Decimal
-    trade_session_start: str
-    trade_session_end: str
+    market_session_mode: str
     log_dir: Path
     timezone: str
     gmtrade_endpoint: str
@@ -46,10 +44,10 @@ _REQUIRED_FIELDS = (
     "poll_interval_seconds",
     "take_profit_ratio",
     "stop_loss_ratio",
-    "trade_session_start",
-    "trade_session_end",
+    "market_session_mode",
     "log_dir",
 )
+_SUPPORTED_MARKET_SESSION_MODES = {"a_share", "futures_placeholder"}
 
 
 def _raise(code: str, message: str, *, context: dict[str, str] | None = None) -> None:
@@ -123,17 +121,27 @@ def _parse_positive_int(value: Any, field_name: str) -> int:
     return result
 
 
-def _parse_trade_window(start_text: Any, end_text: Any) -> tuple[str, str]:
-    """校验交易时间窗口格式与先后顺序。"""
-    try:
-        start_value = time.fromisoformat(str(start_text))
-        end_value = time.fromisoformat(str(end_text))
-    except ValueError:
-        _raise("config.invalid_trade_window", "交易时间必须是 HH:MM:SS 格式")
+def _parse_market_session_mode(value: Any, field_name: str) -> str:
+    """校验市场交易时段模式，避免不同市场共用一套错误时间窗口。"""
+    if not isinstance(value, str) or not value.strip():
+        _raise(
+            "config.invalid_market_session_mode",
+            f"字段 {field_name} 必须是非空字符串",
+            context={"field": field_name, "value": str(value)},
+        )
 
-    if start_value >= end_value:
-        _raise("config.invalid_trade_window", "交易开始时间必须早于结束时间")
-    return str(start_text), str(end_text)
+    result = value.strip()
+    if result not in _SUPPORTED_MARKET_SESSION_MODES:
+        _raise(
+            "config.invalid_market_session_mode",
+            f"字段 {field_name} 不支持 {result}",
+            context={
+                "field": field_name,
+                "value": result,
+                "supported": ",".join(sorted(_SUPPORTED_MARKET_SESSION_MODES)),
+            },
+        )
+    return result
 
 
 def load_config(config_path: Path) -> AppConfig:
@@ -163,11 +171,6 @@ def load_config(config_path: Path) -> AppConfig:
 
     # 先统一做环境变量替换，再进入类型校验，避免同一字段在多处重复解析。
     resolved = {key: _resolve_env(value, key) for key, value in raw.items()}
-    trade_session_start, trade_session_end = _parse_trade_window(
-        resolved["trade_session_start"],
-        resolved["trade_session_end"],
-    )
-
     return AppConfig(
         account_id=str(resolved["account_id"]),
         token=str(resolved["token"]),
@@ -184,9 +187,11 @@ def load_config(config_path: Path) -> AppConfig:
             resolved["stop_loss_ratio"],
             "stop_loss_ratio",
         ),
-        trade_session_start=trade_session_start,
-        trade_session_end=trade_session_end,
+        market_session_mode=_parse_market_session_mode(
+            resolved["market_session_mode"],
+            "market_session_mode",
+        ),
         log_dir=Path(str(resolved["log_dir"])),
         timezone=str(resolved.get("timezone", "Asia/Shanghai")),
-        gmtrade_endpoint=str(resolved.get("gmtrade_endpoint", "api.myquant.cn:9000")),
+        gmtrade_endpoint=str(resolved.get("gmtrade_endpoint", "127.0.0.1:7001")),
     )

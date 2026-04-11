@@ -420,7 +420,17 @@ def _fetch_orders(
     ).SerializeToString()
     status, res = py_gmi_get_orders(req)
     if c_status_fail(status, "get_orders_mm"):
-        return []
+        raise ServiceError(
+            code="gmtrade.query_orders_failed",
+            message="掘金查单失败",
+            retryable=True,
+            context={
+                "account_id": account_id,
+                "symbol": symbol,
+                "cl_ord_id": cl_ord_id,
+                "status": str(status),
+            },
+        )
     if not res:
         return []
 
@@ -449,7 +459,16 @@ def _fetch_execution_reports(*, account_id: str, cl_ord_id: str) -> list[dict[st
     ).SerializeToString()
     status, res = py_gmi_get_execution_reports(req)
     if c_status_fail(status, "py_gmi_get_execution_reports"):
-        return []
+        raise ServiceError(
+            code="gmtrade.query_execution_reports_failed",
+            message="掘金查成交回报失败",
+            retryable=True,
+            context={
+                "account_id": account_id,
+                "cl_ord_id": cl_ord_id,
+                "status": str(status),
+            },
+        )
     if not res:
         return []
 

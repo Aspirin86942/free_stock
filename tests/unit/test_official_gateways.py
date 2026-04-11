@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
+import sys
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
@@ -16,6 +17,7 @@ from gm.enum import (
 
 from gmtrade_live.config import AppConfig
 from gmtrade_live.errors import ServiceError
+import gmtrade_live.gateways.gmtrade_trade_gateway as gateway_module
 from gmtrade_live.gateways.gm_market_gateway import GMCurrentQuoteGateway
 from gmtrade_live.gateways.gmtrade_trade_gateway import GMTradeQueryGateway
 from gmtrade_live.models import OrderRequest
@@ -154,8 +156,7 @@ def _build_config() -> AppConfig:
         poll_interval_seconds=5,
         take_profit_ratio=Decimal("0.05"),
         stop_loss_ratio=Decimal("0.03"),
-        trade_session_start="09:30:00",
-        trade_session_end="15:00:00",
+        market_session_mode="a_share",
         log_dir=Path("logs"),
         timezone="Asia/Shanghai",
         gmtrade_endpoint="api.myquant.cn:9000",
@@ -406,3 +407,76 @@ def test_gm_api_gateway_filters_execution_reports_by_cl_ord_id(
     assert snapshots[0].symbol == "SHSE.600036"
     assert snapshots[0].filled_volume == 100
     assert snapshots[0].avg_price == Decimal("10.450")
+
+
+def test_fetch_orders_raises_when_low_level_sdk_call_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeGetOrdersReq:
+        def __init__(self, **kwargs: object) -> None:
+            self.kwargs = kwargs
+
+        def SerializeToString(self) -> bytes:
+            return b"request"
+
+    class FakeOrders:
+        def __init__(self) -> None:
+            self.data: list[object] = []
+
+        def ParseFromString(self, value: bytes) -> None:
+            raise AssertionError("SDK failure should short-circuit before parsing response")
+
+    monkeypatch.setitem(sys.modules, "gm.csdk.c_sdk", SimpleNamespace(
+        c_status_fail=lambda status, api_name: True,
+        py_gmi_get_orders=lambda req: (1, b""),
+    ))
+    monkeypatch.setitem(sys.modules, "gm.model", SimpleNamespace(DictLikeOrderMM=object))
+    monkeypatch.setitem(sys.modules, "gm.pb.account_pb2", SimpleNamespace(Orders=FakeOrders))
+    monkeypatch.setitem(sys.modules, "gm.pb.trade_pb2", SimpleNamespace(GetOrdersReq=FakeGetOrdersReq))
+    monkeypatch.setitem(sys.modules, "gm.pb_to_dict", SimpleNamespace(protobuf_to_dict=lambda *args, **kwargs: {}))
+
+    with pytest.raises(ServiceError) as exc_info:
+        gateway_module._fetch_orders(
+            api_module=FakeGMApi(),
+            account_id="demo-account",
+            cl_ord_id="ORDER_1",
+            symbol="SHSE.600036",
+        )
+
+    assert exc_info.value.code == "gmtrade.query_orders_failed"
+    assert exc_info.value.retryable is True
+
+
+def test_fetch_execution_reports_raises_when_low_level_sdk_call_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeGetExecRptsReq:
+        def __init__(self, **kwargs: object) -> None:
+            self.kwargs = kwargs
+
+        def SerializeToString(self) -> bytes:
+            return b"request"
+
+    class FakeExecRpts:
+        def __init__(self) -> None:
+            self.data: list[object] = []
+
+        def ParseFromString(self, value: bytes) -> None:
+            raise AssertionError("SDK failure should short-circuit before parsing response")
+
+    monkeypatch.setitem(sys.modules, "gm.csdk.c_sdk", SimpleNamespace(
+        c_status_fail=lambda status, api_name: True,
+        py_gmi_get_execution_reports=lambda req: (1, b""),
+    ))
+    monkeypatch.setitem(sys.modules, "gm.pb.account_pb2", SimpleNamespace(ExecRpts=FakeExecRpts))
+    monkeypatch.setitem(sys.modules, "gm.pb.trade_pb2", SimpleNamespace(GetExecrptsReq=FakeGetExecRptsReq))
+    monkeypatch.setitem(sys.modules, "gm.pb_to_dict", SimpleNamespace(protobuf_to_dict=lambda *args, **kwargs: {}))
+
+    with pytest.raises(ServiceError) as exc_info:
+        gateway_module._fetch_execution_reports(
+            account_id="demo-account",
+            cl_ord_id="ORDER_1",
+        )
+
+    assert exc_info.value.code == "gmtrade.query_execution_reports_failed"
+    assert exc_info.value.retryable is True
