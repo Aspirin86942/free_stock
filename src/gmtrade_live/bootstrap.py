@@ -19,8 +19,8 @@ from gmtrade_live.services.m2_decision_engine import M2DecisionEngine
 from gmtrade_live.services.m2_dry_run import M2DryRunService
 from gmtrade_live.services.m2_state_manager import M2StateManager
 from gmtrade_live.services.m3_execution_service import M3ExecutionService
+from gmtrade_live.services.m3_state_manager import M3PositionStateManager
 from gmtrade_live.session import resolve_trading_session
-from gmtrade_live.state import PositionStateManager
 
 
 def _resolve_current_session_state(config) -> object:
@@ -268,7 +268,7 @@ def run_m3_execution(
     service = M3ExecutionService(
         trade_gateway=trade_gateway,
         market_gateway=market_gateway,
-        state_manager=PositionStateManager(logger),
+        state_manager=M3PositionStateManager(logger),
         decision_engine=M2DecisionEngine(),
         logger=logger,
     )

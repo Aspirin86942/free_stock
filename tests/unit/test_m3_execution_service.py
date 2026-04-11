@@ -16,7 +16,10 @@ from gmtrade_live.models import (
 )
 from gmtrade_live.services.m2_decision_engine import M2DecisionEngine
 from gmtrade_live.services.m3_execution_service import M3ExecutionService
-from gmtrade_live.state import PositionState, PositionStateManager
+from gmtrade_live.services.m3_state_manager import (
+    M3ExecutionState,
+    M3PositionStateManager,
+)
 
 
 def _now() -> datetime:
@@ -120,7 +123,7 @@ def test_run_round_submits_sell_order_with_non_promoted_target_when_full_positio
     service = M3ExecutionService(
         trade_gateway=trade_gateway,
         market_gateway=FakeMarketGateway(),
-        state_manager=PositionStateManager(logger=None),
+        state_manager=M3PositionStateManager(logger=None),
         decision_engine=M2DecisionEngine(),
         logger=logging.getLogger("test"),
         clock=_now,
@@ -142,10 +145,10 @@ def test_run_round_tracks_existing_open_order_without_duplicate_submit() -> None
         order_status="partially_filled",
         execution_filled_volume=100,
     )
-    state_manager = PositionStateManager(logger=None)
+    state_manager = M3PositionStateManager(logger=None)
     state_manager.update_state(
         "SHSE.600036",
-        PositionState.submitted,
+        M3ExecutionState.submitted,
         cl_ord_id="CL_EXIST",
         requested_volume=200,
         remaining_volume=200,
@@ -175,7 +178,7 @@ def test_run_round_emits_block_detail_when_quantity_plan_is_blocked() -> None:
     service = M3ExecutionService(
         trade_gateway=trade_gateway,
         market_gateway=FakeMarketGateway(),
-        state_manager=PositionStateManager(logger=None),
+        state_manager=M3PositionStateManager(logger=None),
         decision_engine=M2DecisionEngine(),
         logger=logging.getLogger("test"),
         clock=_now,
@@ -207,7 +210,7 @@ def test_run_round_preserves_submit_broker_order_id_when_query_has_no_broker_ord
     service = M3ExecutionService(
         trade_gateway=trade_gateway,
         market_gateway=FakeMarketGateway(),
-        state_manager=PositionStateManager(logger=None),
+        state_manager=M3PositionStateManager(logger=None),
         decision_engine=M2DecisionEngine(),
         logger=logging.getLogger("test"),
         clock=_now,
@@ -237,7 +240,7 @@ def test_run_round_preserves_remaining_volume_when_pending_new_snapshot_reports_
     service = M3ExecutionService(
         trade_gateway=trade_gateway,
         market_gateway=FakeMarketGateway(),
-        state_manager=PositionStateManager(logger=None),
+        state_manager=M3PositionStateManager(logger=None),
         decision_engine=M2DecisionEngine(),
         logger=logging.getLogger("test"),
         clock=_now,

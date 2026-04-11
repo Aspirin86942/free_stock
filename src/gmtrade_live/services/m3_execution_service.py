@@ -24,8 +24,12 @@ from gmtrade_live.models import (
     PositionSnapshot,
 )
 from gmtrade_live.services.m3_quantity_rules import build_sell_quantity_plan
+from gmtrade_live.services.m3_state_manager import (
+    M3ExecutionState,
+    M3ExecutionStateSnapshot,
+    M3PositionStateManager,
+)
 from gmtrade_live.session import resolve_trading_session
-from gmtrade_live.state import PositionState, PositionStateManager, PositionStateSnapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,7 +62,7 @@ class M3ExecutionService:
         *,
         trade_gateway: TradeGateway,
         market_gateway: MarketGateway,
-        state_manager: PositionStateManager,
+        state_manager: M3PositionStateManager,
         decision_engine,
         logger: logging.Logger,
         clock=None,
@@ -202,7 +206,7 @@ class M3ExecutionService:
 
         self._state_manager.update_state(
             symbol,
-            PositionState.submitting,
+            M3ExecutionState.submitting,
             trigger_reason=trigger_reason,
             requested_volume=requested_volume,
             remaining_volume=requested_volume,
@@ -220,7 +224,7 @@ class M3ExecutionService:
         if not result.accepted or result.cl_ord_id is None:
             self._state_manager.update_state(
                 symbol,
-                PositionState.failed,
+                M3ExecutionState.failed,
                 cl_ord_id=result.cl_ord_id,
                 broker_order_id=result.broker_order_id,
                 trigger_reason=trigger_reason,
@@ -239,7 +243,7 @@ class M3ExecutionService:
 
         self._state_manager.update_state(
             symbol,
-            PositionState.submitted,
+            M3ExecutionState.submitted,
             cl_ord_id=result.cl_ord_id,
             broker_order_id=result.broker_order_id,
             trigger_reason=trigger_reason,
@@ -433,24 +437,24 @@ def _build_ephemeral_decision_state(
     )
 
 
-def _map_execution_state(status: str) -> PositionState:
+def _map_execution_state(status: str) -> M3ExecutionState:
     """把查单状态映射为执行态状态机。"""
     if status == "submitted":
-        return PositionState.submitted
+        return M3ExecutionState.submitted
     if status == "partially_filled":
-        return PositionState.partially_filled
+        return M3ExecutionState.partially_filled
     if status == "filled":
-        return PositionState.filled
+        return M3ExecutionState.filled
     if status in {"cancelled", "expired", "done_for_day", "stopped"}:
-        return PositionState.cancelled
+        return M3ExecutionState.cancelled
     if status == "rejected":
-        return PositionState.failed
-    return PositionState.submitted
+        return M3ExecutionState.failed
+    return M3ExecutionState.submitted
 
 
 def _resolve_remaining_volume(
     *,
-    snapshot: PositionStateSnapshot,
+    snapshot: M3ExecutionStateSnapshot,
     event: _OrderStatusQueryEvent,
 ) -> int:
     """对 pending_new 等早期状态保守保留已知剩余量，避免被缺字段快照误写成 0。"""

@@ -1,4 +1,4 @@
-"""单标的状态管理。"""
+"""M3 按标的维护订单执行态。"""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from enum import Enum
 from logging import Logger
 
 
-class PositionState(str, Enum):
+class M3ExecutionState(str, Enum):
     """自动卖出执行链的最小状态机。"""
 
     idle = "idle"
@@ -22,11 +22,11 @@ class PositionState(str, Enum):
 
 
 @dataclass(slots=True)
-class PositionStateSnapshot:
+class M3ExecutionStateSnapshot:
     """单个标的的执行态快照。"""
 
     symbol: str
-    state: PositionState
+    state: M3ExecutionState
     cl_ord_id: str | None = None
     broker_order_id: str | None = None
     trigger_reason: str | None = None
@@ -42,23 +42,27 @@ class PositionStateSnapshot:
     message: str = ""
 
 
-class PositionStateManager:
+class M3PositionStateManager:
     """按标的维护执行态，避免不同股票之间互相污染。"""
 
     def __init__(self, logger: Logger | None) -> None:
         self._logger = logger
-        self._cache: dict[str, PositionStateSnapshot] = {}
+        self._cache: dict[str, M3ExecutionStateSnapshot] = {}
 
-    def get_state(self, symbol: str) -> PositionStateSnapshot:
+    def get_state(self, symbol: str) -> M3ExecutionStateSnapshot:
         """读取标的状态；未出现过的标的默认返回 idle。"""
         if symbol not in self._cache:
-            return PositionStateSnapshot(symbol=symbol, state=PositionState.idle)
+            return M3ExecutionStateSnapshot(symbol=symbol, state=M3ExecutionState.idle)
         return self._cache[symbol]
+
+    def active_states(self) -> tuple[M3ExecutionStateSnapshot, ...]:
+        """返回当前缓存里的所有执行态快照。"""
+        return tuple(sorted(self._cache.values(), key=lambda item: item.symbol))
 
     def update_state(
         self,
         symbol: str,
-        new_state: PositionState,
+        new_state: M3ExecutionState,
         **kwargs: object,
     ) -> None:
         """更新标的执行态并记录迁移日志。"""
@@ -89,7 +93,7 @@ class PositionStateManager:
         """把 submitting 也当成 open-order，挡住提交和查单之间的重复发单窗口。"""
         state = self.get_state(symbol).state
         return state in (
-            PositionState.submitting,
-            PositionState.submitted,
-            PositionState.partially_filled,
+            M3ExecutionState.submitting,
+            M3ExecutionState.submitted,
+            M3ExecutionState.partially_filled,
         )

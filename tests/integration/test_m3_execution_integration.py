@@ -16,7 +16,10 @@ from gmtrade_live.models import (
 )
 from gmtrade_live.services.m2_decision_engine import M2DecisionEngine
 from gmtrade_live.services.m3_execution_service import M3ExecutionService
-from gmtrade_live.state import PositionState, PositionStateManager
+from gmtrade_live.services.m3_state_manager import (
+    M3ExecutionState,
+    M3PositionStateManager,
+)
 
 
 def _now() -> datetime:
@@ -105,7 +108,7 @@ class FakeMarketGateway:
 
 
 def test_m3_execution_service_completes_query_driven_sell_round() -> None:
-    state_manager = PositionStateManager(logging.getLogger("test"))
+    state_manager = M3PositionStateManager(logging.getLogger("test"))
     service = M3ExecutionService(
         trade_gateway=FakeTradeGateway(),
         market_gateway=FakeMarketGateway(),
@@ -122,4 +125,4 @@ def test_m3_execution_service_completes_query_driven_sell_round() -> None:
     assert report.execution_details[0].execution_state == "filled"
     assert report.execution_details[0].filled_volume == 100
     assert report.execution_details[0].avg_price == Decimal("10.80")
-    assert state_manager.get_state("SHSE.600036").state is PositionState.filled
+    assert state_manager.get_state("SHSE.600036").state is M3ExecutionState.filled

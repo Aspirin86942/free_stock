@@ -428,7 +428,7 @@ def test_run_m3_execution_prints_summary_block_and_execution_details(
     )
     monkeypatch.setattr(bootstrap, "GMTradeGateway", lambda: FakeGateway())
     monkeypatch.setattr(bootstrap, "GMCurrentQuoteGateway", lambda: FakeGateway())
-    monkeypatch.setattr(bootstrap, "PositionStateManager", lambda logger: SimpleNamespace())
+    monkeypatch.setattr(bootstrap, "M3PositionStateManager", lambda logger: SimpleNamespace())
     monkeypatch.setattr(bootstrap, "M2DecisionEngine", lambda: SimpleNamespace())
     monkeypatch.setattr(bootstrap, "M3ExecutionService", FakeService)
 
@@ -474,7 +474,7 @@ def test_run_m3_execution_returns_nonzero_when_round_raises(
     )
     monkeypatch.setattr(bootstrap, "GMTradeGateway", lambda: FakeGateway())
     monkeypatch.setattr(bootstrap, "GMCurrentQuoteGateway", lambda: FakeGateway())
-    monkeypatch.setattr(bootstrap, "PositionStateManager", lambda logger: SimpleNamespace())
+    monkeypatch.setattr(bootstrap, "M3PositionStateManager", lambda logger: SimpleNamespace())
     monkeypatch.setattr(bootstrap, "M2DecisionEngine", lambda: SimpleNamespace())
     monkeypatch.setattr(bootstrap, "M3ExecutionService", FakeService)
 
