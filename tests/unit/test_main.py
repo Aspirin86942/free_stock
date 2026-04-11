@@ -22,6 +22,8 @@ def test_parse_cli_args_defaults_to_m0() -> None:
 
     assert args.mode == "m0"
     assert args.symbol is None
+    assert not hasattr(args, "once")
+    assert not hasattr(args, "max_rounds")
 
 
 def test_parse_cli_args_accepts_m1_market_order() -> None:
@@ -232,6 +234,22 @@ def test_parse_cli_args_rejects_once_outside_m2() -> None:
                 "--once",
             ]
         )
+
+
+def test_parse_cli_args_reports_once_as_unrecognized_outside_m2(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit):
+        main.parse_cli_args(
+            [
+                "--config",
+                "config/sim_account.yaml",
+                "--once",
+            ]
+        )
+
+    captured = capsys.readouterr()
+    assert "unrecognized arguments: --once" in captured.err
 
 
 def test_main_dispatches_to_m2(monkeypatch: pytest.MonkeyPatch) -> None:

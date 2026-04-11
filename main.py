@@ -31,45 +31,62 @@ def _parse_positive_decimal(value: str) -> Decimal:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """构建项目统一 CLI 参数。"""
+    """构建基础 CLI 参数。"""
     parser = argparse.ArgumentParser(
         description="GMTrade connectivity, M1 manual trade, and M2 decision dry-run"
     )
     parser.add_argument("--config", required=True, help="Path to YAML config file")
     parser.add_argument("--mode", choices=("m0", "m1", "m2"), default="m0")
-    parser.add_argument("--symbol")
-    parser.add_argument("--volume", type=_parse_positive_int)
-    parser.add_argument("--price-type", choices=("market", "limit"))
-    parser.add_argument("--price", type=_parse_positive_decimal)
-    parser.add_argument("--timeout-seconds", type=_parse_positive_int, default=60)
-    parser.add_argument("--side", choices=("buy", "sell"))
-    parser.add_argument("--once", action="store_true")
-    parser.add_argument("--max-rounds", type=_parse_positive_int)
+    parser.set_defaults(
+        symbol=None,
+        volume=None,
+        price_type=None,
+        price=None,
+        timeout_seconds=60,
+        side=None,
+    )
     return parser
 
 
-def parse_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    """解析并校验 M0/M1 模式所需参数。"""
+def build_parser_for_mode(mode: str) -> argparse.ArgumentParser:
+    """按运行模式构建完整 CLI 参数。"""
     parser = build_parser()
-    args = parser.parse_args(argv)
+    if mode == "m1":
+        parser.add_argument("--symbol", required=True)
+        parser.add_argument("--volume", type=_parse_positive_int, required=True)
+        parser.add_argument("--price-type", choices=("market", "limit"), required=True)
+        parser.add_argument("--price", type=_parse_positive_decimal)
+        parser.add_argument("--timeout-seconds", type=_parse_positive_int, default=60)
+        parser.add_argument("--side", choices=("buy", "sell"), required=True)
+        return parser
 
-    if args.mode == "m1":
-        if not args.symbol:
-            parser.error("--mode m1 时必须提供 --symbol")
-        if args.volume is None:
-            parser.error("--mode m1 时必须提供 --volume")
-        if not args.price_type:
-            parser.error("--mode m1 时必须提供 --price-type")
-        if args.price_type == "limit" and args.price is None:
-            parser.error("--price-type limit 时必须提供 --price")
-        if args.price_type == "market" and args.price is not None:
-            parser.error("--price-type market 时不能提供 --price")
-        if not args.side:
-            parser.error("--mode m1 时必须提供 --side")
-    if args.mode != "m2" and (args.once or args.max_rounds is not None):
-        parser.error("--once 和 --max-rounds 仅支持 --mode m2")
-    if args.mode == "m2" and args.once and args.max_rounds is not None:
-        parser.error("--once 和 --max-rounds 不能同时使用")
+    if mode == "m2":
+        group = parser.add_mutually_exclusive_group()
+        group.add_argument("--once", action="store_true")
+        group.add_argument("--max-rounds", type=_parse_positive_int)
+    return parser
+
+
+def _validate_mode_args(
+    parser: argparse.ArgumentParser, args: argparse.Namespace
+) -> None:
+    """补充 argparse 无法直接表达的参数组合约束。"""
+    if args.mode != "m1":
+        return
+    if args.price_type == "limit" and args.price is None:
+        parser.error("--price-type limit 时必须提供 --price")
+    if args.price_type == "market" and args.price is not None:
+        parser.error("--price-type market 时不能提供 --price")
+
+
+def parse_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    """按模式解析并校验 CLI 参数。"""
+    parser = build_parser()
+    # 先只识别 mode，再按 mode 注册专属参数，避免无关模式误收参数。
+    base_args, _ = parser.parse_known_args(argv)
+    mode_parser = build_parser_for_mode(base_args.mode)
+    args = mode_parser.parse_args(argv)
+    _validate_mode_args(mode_parser, args)
 
     return args
 
