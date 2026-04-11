@@ -127,7 +127,8 @@ class M2DryRunService:
             previous_decision = self._last_decisions.get(position.symbol)
             change_tags: list[str] = []
 
-            # 如果以前没有记录，这一轮一上来就满足卖出条件，形成触发条件；如果上一轮和这一轮 should_sell 不一样：这轮变成该卖 -> trigger_activated这轮变成不该卖 -> trigger_cleared
+            # 如果以前没有记录，这一轮一上来就满足卖出条件，形成触发条件；
+            # 如果上一轮和这一轮 should_sell 不一样：这轮变成该卖 -> trigger_activated这轮变成不该卖 -> trigger_cleared
 
             if previous_decision is None and decision.should_sell:
                 change_tags.append("trigger_activated")
