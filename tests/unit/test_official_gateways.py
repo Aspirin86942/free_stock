@@ -148,6 +148,28 @@ class FakeGMApiIntradayStockPosition(FakeGMApi):
         ]
 
 
+class FakeGMApiEmptySubmitOrderId(FakeGMApi):
+    def order_volume(self, **kwargs: object) -> list[SimpleNamespace]:
+        self.last_order_kwargs = kwargs
+        return [
+            SimpleNamespace(
+                cl_ord_id="ORDER_1",
+                order_id="",
+                symbol=kwargs["symbol"],
+                status=1,
+                ord_rej_reason_detail="",
+                created_at=datetime(
+                    2026,
+                    4,
+                    9,
+                    10,
+                    6,
+                    tzinfo=ZoneInfo("Asia/Shanghai"),
+                ),
+            )
+        ]
+
+
 def _build_config() -> AppConfig:
     return AppConfig(
         account_id="demo-account",
@@ -282,6 +304,26 @@ def test_gm_api_gateway_submits_order_via_query_driven_path() -> None:
     assert api.last_order_kwargs["side"] == OrderSide_Sell
     assert api.last_order_kwargs["position_effect"] == PositionEffect_Close
     assert result.accepted is True
+    assert result.cl_ord_id == "ORDER_1"
+    assert result.broker_order_id is None
+
+
+def test_gm_api_gateway_normalizes_empty_submit_broker_order_id_to_none() -> None:
+    api = FakeGMApiEmptySubmitOrderId()
+    gateway = GMTradeGateway(api_module=api, account_id="demo-account")
+    config = _build_config()
+
+    gateway.connect(config)
+    result = gateway.submit_order(
+        OrderRequest(
+            symbol="SHSE.600036",
+            volume=100,
+            side="sell",
+            price_type="market",
+            price=None,
+        )
+    )
+
     assert result.cl_ord_id == "ORDER_1"
     assert result.broker_order_id is None
 

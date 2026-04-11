@@ -76,8 +76,8 @@ class M2DecisionEngine:
         # 这里先把策略触发和可执行性拆开，是为了后续执行层能直接消费决策事实。
         if not should_sell:
             block_reason = "price_not_reached"
-        elif session_state is not TradingSessionState.TRADING:
-            block_reason = "not_in_trading_session"
+        # elif session_state is not TradingSessionState.TRADING:
+        #     block_reason = "not_in_trading_session"
         elif not sellable_now:
             block_reason = "temporarily_not_closable"
         else:

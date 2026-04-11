@@ -187,3 +187,64 @@ def test_run_round_emits_block_detail_when_quantity_plan_is_blocked() -> None:
     assert report.summary.blocked_count == 1
     assert report.block_details[0].block_reason == "sell_quantity_exceeds_available"
     assert trade_gateway.submitted_requests == []
+
+
+def test_run_round_preserves_submit_broker_order_id_when_query_has_no_broker_order_id() -> None:
+    class QueryMissingBrokerOrderIdGateway(FakeTradeGateway):
+        def query_order_status(self, cl_ord_id: str, symbol: str):
+            return OrderStatusSnapshot(
+                cl_ord_id=cl_ord_id,
+                broker_order_id=None,
+                symbol=symbol,
+                status="submitted",
+                filled_volume=0,
+                remaining_volume=200,
+                rejection_reason=None,
+                event_time=_now(),
+            )
+
+    trade_gateway = QueryMissingBrokerOrderIdGateway()
+    service = M3ExecutionService(
+        trade_gateway=trade_gateway,
+        market_gateway=FakeMarketGateway(),
+        state_manager=PositionStateManager(logger=None),
+        decision_engine=M2DecisionEngine(),
+        logger=logging.getLogger("test"),
+        clock=_now,
+        timer=lambda: 0.0,
+    )
+
+    report = service.run_round(config=_config(ratio="0.80"), round_no=1)
+
+    assert report.execution_details[0].broker_order_id == "BK_1"
+
+
+def test_run_round_preserves_remaining_volume_when_pending_new_snapshot_reports_zero() -> None:
+    class PendingNewZeroRemainingGateway(FakeTradeGateway):
+        def query_order_status(self, cl_ord_id: str, symbol: str):
+            return OrderStatusSnapshot(
+                cl_ord_id=cl_ord_id,
+                broker_order_id=None,
+                symbol=symbol,
+                status="pending_new",
+                filled_volume=0,
+                remaining_volume=0,
+                rejection_reason=None,
+                event_time=_now(),
+            )
+
+    trade_gateway = PendingNewZeroRemainingGateway()
+    service = M3ExecutionService(
+        trade_gateway=trade_gateway,
+        market_gateway=FakeMarketGateway(),
+        state_manager=PositionStateManager(logger=None),
+        decision_engine=M2DecisionEngine(),
+        logger=logging.getLogger("test"),
+        clock=_now,
+        timer=lambda: 0.0,
+    )
+
+    report = service.run_round(config=_config(ratio="0.80"), round_no=1)
+
+    assert report.execution_details[0].last_order_status == "pending_new"
+    assert report.execution_details[0].remaining_volume == 200

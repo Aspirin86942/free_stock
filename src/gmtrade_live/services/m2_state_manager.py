@@ -27,10 +27,14 @@ class M2StateManager:
         now: datetime,
     ) -> tuple[DecisionPositionStateSnapshot, ...]:
         """根据当前持仓集合同步 watching/tombstone 状态。"""
-        active_positions = tuple(position for position in positions if position.volume > 0)
+        # 只保留真正有仓位的持仓
+        active_positions = tuple(
+            position for position in positions if position.volume > 0
+        )
         active_symbols = {position.symbol for position in active_positions}
         next_cache: dict[str, DecisionPositionStateSnapshot] = {}
-
+        # 处理当前还在持仓里的股票，这只股票是新出现的，创建一条 watching 状态；
+        # 这只股票以前就存在，更新成最新 watching 状态
         for position in active_positions:
             current = self._cache.get(position.symbol)
             if current is None:
@@ -62,7 +66,7 @@ class M2StateManager:
                 disappeared_at=None,
                 tombstone_rounds=0,
             )
-
+        # 处理当前不再持仓里的股票，这只股票以前就存在，更新成最新 tombstone 状态；
         for symbol, snapshot in self._cache.items():
             if symbol in active_symbols:
                 continue

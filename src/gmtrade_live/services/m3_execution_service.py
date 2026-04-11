@@ -25,7 +25,7 @@ from gmtrade_live.models import (
 )
 from gmtrade_live.services.m3_quantity_rules import build_sell_quantity_plan
 from gmtrade_live.session import resolve_trading_session
-from gmtrade_live.state import PositionState, PositionStateManager
+from gmtrade_live.state import PositionState, PositionStateManager, PositionStateSnapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -351,12 +351,16 @@ class M3ExecutionService:
         event: _OrderStatusQueryEvent,
     ) -> None:
         """把查单结果并入当前执行态。"""
+        snapshot = self._state_manager.get_state(symbol)
         self._state_manager.update_state(
             symbol,
             _map_execution_state(event.status),
-            broker_order_id=event.broker_order_id,
-            filled_volume=event.filled_volume,
-            remaining_volume=event.remaining_volume,
+            broker_order_id=event.broker_order_id or snapshot.broker_order_id,
+            filled_volume=max(snapshot.filled_volume, event.filled_volume),
+            remaining_volume=_resolve_remaining_volume(
+                snapshot=snapshot,
+                event=event,
+            ),
             last_order_status=event.status,
             rejection_reason=event.rejection_reason,
             event_time=event.event_time,
@@ -369,12 +373,13 @@ class M3ExecutionService:
         event: _ExecutionReportsQueryEvent,
     ) -> None:
         """把查成交结果并入当前执行态。"""
+        snapshot = self._state_manager.get_state(symbol)
         self._state_manager.update_state(
             symbol,
-            self._state_manager.get_state(symbol).state,
-            broker_order_id=event.broker_order_id,
-            filled_volume=event.filled_volume,
-            avg_price=event.avg_price,
+            snapshot.state,
+            broker_order_id=event.broker_order_id or snapshot.broker_order_id,
+            filled_volume=max(snapshot.filled_volume, event.filled_volume),
+            avg_price=event.avg_price if event.avg_price is not None else snapshot.avg_price,
             event_time=event.event_time,
         )
 
@@ -441,3 +446,24 @@ def _map_execution_state(status: str) -> PositionState:
     if status == "rejected":
         return PositionState.failed
     return PositionState.submitted
+
+
+def _resolve_remaining_volume(
+    *,
+    snapshot: PositionStateSnapshot,
+    event: _OrderStatusQueryEvent,
+) -> int:
+    """对 pending_new 等早期状态保守保留已知剩余量，避免被缺字段快照误写成 0。"""
+    if event.remaining_volume > 0:
+        return event.remaining_volume
+
+    if event.status in {"filled", "cancelled", "expired", "done_for_day", "stopped", "rejected"}:
+        return 0
+
+    if snapshot.remaining_volume > 0 and event.filled_volume <= snapshot.filled_volume:
+        return snapshot.remaining_volume
+
+    if snapshot.requested_volume > event.filled_volume:
+        return snapshot.requested_volume - event.filled_volume
+
+    return 0

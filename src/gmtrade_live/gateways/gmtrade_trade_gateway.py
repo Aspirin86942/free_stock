@@ -141,7 +141,7 @@ class GMTradeGateway:
         return OrderSubmitResult(
             accepted=_is_submit_accepted(order_id=cl_ord_id, raw_status=raw_status),
             cl_ord_id=str(cl_ord_id) if cl_ord_id is not None else None,
-            broker_order_id=str(broker_order_id) if broker_order_id is not None else None,
+            broker_order_id=_as_optional_str(broker_order_id),
             symbol=str(_read_optional(row, "symbol", default=request.symbol)),
             message=message,
             raw_status=raw_status,
