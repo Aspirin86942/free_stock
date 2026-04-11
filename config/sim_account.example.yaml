@@ -4,6 +4,7 @@ strategy_name: gmtrade-live-m0
 poll_interval_seconds: 5
 take_profit_ratio: "0.05"
 stop_loss_ratio: "0.03"
+sell_quantity_ratio: "1.0"
 market_session_mode: a_share
 log_dir: logs
 timezone: Asia/Shanghai

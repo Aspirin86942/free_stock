@@ -4,7 +4,7 @@
 
 **Goal:** 实现 `--mode m3` 自动卖出执行闭环，在显式运行时复用 `M2DecisionEngine` 完成连续卖出、查询驱动收口、防重复卖单和结构化 CLI 输出，并保持当前 `market_session_mode` / gateway / M2 契约不回退。
 
-**Architecture:** M3 继续复用现有 `GMTradeGateway`、`GMCurrentQuoteGateway`、`M2DecisionEngine` 和 `resolve_trading_session()`。`state.py` 收敛为纯执行态，查询结果先规范化为内部执行事件，再驱动执行态聚合与 `M3RoundReport` 输出；自动卖出请求固定为 `side="sell"` 且 `price_type="market"`，因为当前设计稿没有引入额外的自动报价配置。
+**Architecture:** M3 继续复用现有 `GMTradeGateway`、`GMCurrentQuoteGateway`、`M2DecisionEngine` 和 `resolve_trading_session()`。`state.py` 收敛为纯执行态，查询结果先规范化为内部执行事件，再驱动执行态聚合与 `M3RoundReport` 输出；按当前 M3 范围收紧实现，自动卖出请求固定为 `side="sell"` 且 `price_type="market"`，不引入额外自动报价配置。
 
 **Tech Stack:** Python 3.10+, pytest, stdlib `argparse/json/logging/time/zoneinfo/dataclasses`, `Decimal`, 现有 `GMTradeGateway`, `GMCurrentQuoteGateway`, `M2DecisionEngine`, `market_session_mode`, `PositionStateManager`
 
@@ -66,7 +66,7 @@ M3 不做：
 - 当前项目继续以 `market_session_mode` 为唯一交易时段配置，不重新引入 `trade_session_start` / `trade_session_end`
 - `sell_quantity_ratio` 没有默认值，且必须满足 `0 < sell_quantity_ratio <= 1`
 - `state.py` 只维护执行态，不再承载 M2 的 `triggered` 语义
-- M3 自动下单请求固定为 `side="sell"`、`price_type="market"`、`price=None`
+- M3 自动下单请求固定为 `side="sell"`、`price_type="market"`、`price=None`，当前不扩展限价或自动报价配置
 - 当前存在未完成卖单时，M3 只能跟踪，不能重复发单
 - `bootstrap.run_m3_execution()` 对未处理的轮次异常直接输出 `m3_round_error` 并返回非零，避免真实执行链路在不确定状态下继续运行
 
@@ -425,9 +425,9 @@ def test_build_sell_quantity_plan_blocks_when_final_target_exceeds_available() -
 def test_build_sell_quantity_plan_blocks_when_normalized_target_is_zero() -> None:
     plan = build_sell_quantity_plan(
         symbol="SHSE.600036",
-        total_volume=99,
-        available_volume=99,
-        sell_quantity_ratio=Decimal("0.50"),
+        total_volume=250,
+        available_volume=250,
+        sell_quantity_ratio=Decimal("0.01"),
     )
 
     assert plan.final_target_volume == 0

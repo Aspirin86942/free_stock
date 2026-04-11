@@ -30,6 +30,7 @@ class AppConfig:
     poll_interval_seconds: int
     take_profit_ratio: Decimal
     stop_loss_ratio: Decimal
+    sell_quantity_ratio: Decimal
     market_session_mode: str
     log_dir: Path
     timezone: str
@@ -44,6 +45,7 @@ _REQUIRED_FIELDS = (
     "poll_interval_seconds",
     "take_profit_ratio",
     "stop_loss_ratio",
+    "sell_quantity_ratio",
     "market_session_mode",
     "log_dir",
 )
@@ -144,6 +146,18 @@ def _parse_market_session_mode(value: Any, field_name: str) -> str:
     return result
 
 
+def _parse_sell_quantity_ratio(value: Any, field_name: str) -> Decimal:
+    """解析 M3 每轮卖出比例，并把范围限制收口在配置层。"""
+    result = _parse_decimal(value, field_name)
+    if result > Decimal("1"):
+        _raise(
+            "config.invalid_sell_quantity_ratio",
+            f"字段 {field_name} 必须小于等于 1",
+            context={"field": field_name, "value": str(value)},
+        )
+    return result
+
+
 def load_config(config_path: Path) -> AppConfig:
     """读取 YAML 配置并转换为类型安全的应用配置。"""
     if not config_path.exists():
@@ -186,6 +200,10 @@ def load_config(config_path: Path) -> AppConfig:
         stop_loss_ratio=_parse_decimal(
             resolved["stop_loss_ratio"],
             "stop_loss_ratio",
+        ),
+        sell_quantity_ratio=_parse_sell_quantity_ratio(
+            resolved["sell_quantity_ratio"],
+            "sell_quantity_ratio",
         ),
         market_session_mode=_parse_market_session_mode(
             resolved["market_session_mode"],

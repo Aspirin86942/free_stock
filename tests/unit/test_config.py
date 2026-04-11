@@ -23,6 +23,7 @@ def test_load_config_reads_and_resolves_environment_values(
                 "poll_interval_seconds: 5",
                 "take_profit_ratio: '0.05'",
                 "stop_loss_ratio: '0.03'",
+                "sell_quantity_ratio: '1.0'",
                 "market_session_mode: a_share",
                 "log_dir: logs",
                 "timezone: Asia/Shanghai",
@@ -39,6 +40,7 @@ def test_load_config_reads_and_resolves_environment_values(
     assert config.token == "demo-token"
     assert config.take_profit_ratio == Decimal("0.05")
     assert config.stop_loss_ratio == Decimal("0.03")
+    assert config.sell_quantity_ratio == Decimal("1.0")
     assert config.market_session_mode == "a_share"
 
 
@@ -64,6 +66,7 @@ def test_load_config_defaults_gmtrade_endpoint_to_local_terminal(tmp_path: Path)
                 "poll_interval_seconds: 5",
                 "take_profit_ratio: '0.05'",
                 "stop_loss_ratio: '0.03'",
+                "sell_quantity_ratio: '1.0'",
                 "market_session_mode: a_share",
                 "log_dir: logs",
             ]
@@ -87,6 +90,7 @@ def test_load_config_accepts_futures_placeholder_mode(tmp_path: Path) -> None:
                 "poll_interval_seconds: 5",
                 "take_profit_ratio: '0.05'",
                 "stop_loss_ratio: '0.03'",
+                "sell_quantity_ratio: '1.0'",
                 "market_session_mode: futures_placeholder",
                 "log_dir: logs",
             ]
@@ -97,3 +101,84 @@ def test_load_config_accepts_futures_placeholder_mode(tmp_path: Path) -> None:
     config = load_config(config_file)
 
     assert config.market_session_mode == "futures_placeholder"
+
+
+def test_load_config_reads_sell_quantity_ratio(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GM_ACCOUNT_ID", "demo-account")
+    monkeypatch.setenv("GM_TOKEN", "demo-token")
+
+    config_file = tmp_path / "sim_account.yaml"
+    config_file.write_text(
+        "\n".join(
+            [
+                "account_id: ${GM_ACCOUNT_ID}",
+                "token: ${GM_TOKEN}",
+                "strategy_name: gmtrade-live-m0",
+                "poll_interval_seconds: 5",
+                "take_profit_ratio: '0.05'",
+                "stop_loss_ratio: '0.03'",
+                "sell_quantity_ratio: '1.0'",
+                "market_session_mode: a_share",
+                "log_dir: logs",
+                "timezone: Asia/Shanghai",
+                "gmtrade_endpoint: 127.0.0.1:7001",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_config(config_file)
+
+    assert config.sell_quantity_ratio == Decimal("1.0")
+
+
+def test_load_config_rejects_missing_sell_quantity_ratio(tmp_path: Path) -> None:
+    config_file = tmp_path / "broken.yaml"
+    config_file.write_text(
+        "\n".join(
+            [
+                "account_id: demo-account",
+                "token: demo-token",
+                "strategy_name: gmtrade-live-m0",
+                "poll_interval_seconds: 5",
+                "take_profit_ratio: '0.05'",
+                "stop_loss_ratio: '0.03'",
+                "market_session_mode: a_share",
+                "log_dir: logs",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigurationError) as exc_info:
+        load_config(config_file)
+
+    assert exc_info.value.code == "config.missing_field"
+
+
+def test_load_config_rejects_sell_quantity_ratio_above_one(tmp_path: Path) -> None:
+    config_file = tmp_path / "broken.yaml"
+    config_file.write_text(
+        "\n".join(
+            [
+                "account_id: demo-account",
+                "token: demo-token",
+                "strategy_name: gmtrade-live-m0",
+                "poll_interval_seconds: 5",
+                "take_profit_ratio: '0.05'",
+                "stop_loss_ratio: '0.03'",
+                "sell_quantity_ratio: '1.2'",
+                "market_session_mode: a_share",
+                "log_dir: logs",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigurationError) as exc_info:
+        load_config(config_file)
+
+    assert exc_info.value.code == "config.invalid_sell_quantity_ratio"

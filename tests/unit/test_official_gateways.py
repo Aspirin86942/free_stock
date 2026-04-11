@@ -156,6 +156,7 @@ def _build_config() -> AppConfig:
         poll_interval_seconds=5,
         take_profit_ratio=Decimal("0.05"),
         stop_loss_ratio=Decimal("0.03"),
+        sell_quantity_ratio=Decimal("1.0"),
         market_session_mode="a_share",
         log_dir=Path("logs"),
         timezone="Asia/Shanghai",

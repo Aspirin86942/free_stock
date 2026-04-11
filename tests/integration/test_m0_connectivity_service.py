@@ -69,6 +69,7 @@ def test_connectivity_service_reads_cash_positions_and_quotes(tmp_path: Path) ->
         poll_interval_seconds=5,
         take_profit_ratio=Decimal("0.05"),
         stop_loss_ratio=Decimal("0.03"),
+        sell_quantity_ratio=Decimal("1.0"),
         market_session_mode="a_share",
         log_dir=tmp_path,
         timezone="Asia/Shanghai",

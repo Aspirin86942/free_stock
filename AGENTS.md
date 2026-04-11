@@ -53,6 +53,12 @@ conda run -n stock_analysis python main.py --config config/sim_account.yaml --mo
 conda run -n stock_analysis python main.py --config config/sim_account.yaml --mode m2 --max-rounds 3
 ```
 
+### M3 自动卖出执行
+```bash
+# M3 自动卖出执行（单轮）
+conda run -n stock_analysis python main.py --config config/sim_account.yaml --mode m3 --once
+```
+
 ### 测试
 ```bash
 # 运行所有测试
@@ -74,6 +80,7 @@ conda run -n stock_analysis pytest tests/integration/
 - **关键配置项**：
   - `gmtrade_endpoint`: 必须是 `127.0.0.1:7001`（本地掘金终端），不是远程地址
   - `account_id` 和 `token`：从掘金终端获取
+  - `sell_quantity_ratio`：M3 每轮自动卖出的仓位比例，必须满足 `0 < ratio <= 1`
 
 ## 架构设计
 
