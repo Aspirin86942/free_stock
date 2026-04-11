@@ -22,7 +22,13 @@ from gmtrade_live.gateways.protocols import TradeGateway
 
 
 _QUERY_INTERVAL_SECONDS = 0.5
-_TERMINAL_ORDER_STATUSES = {"rejected", "cancelled", "expired", "done_for_day", "stopped"}
+_TERMINAL_ORDER_STATUSES = {
+    "rejected",
+    "cancelled",
+    "expired",
+    "done_for_day",
+    "stopped",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,7 +203,11 @@ class ManualTradeService:
             )
 
         message = _resolve_failure_message(collected)
-        log_method = self._logger.warning if collected.order_status_confirmed else self._logger.error
+        log_method = (
+            self._logger.warning
+            if collected.order_status_confirmed
+            else self._logger.error
+        )
         log_method(
             "m1_manual_trade_timeout account_id=%s cl_ord_id=%s message=%s",
             config.account_id,
@@ -224,7 +234,9 @@ class ManualTradeService:
         timezone_name: str,
     ) -> _CollectedEvents:
         """轮询柜台查询，并把查询结果先转成内部事件再更新聚合状态。"""
+        # print(f"  开始轮询，cl_ord_id={submit_result.cl_ord_id}")
         collected = _CollectedEvents(broker_order_id=submit_result.broker_order_id)
+        # print(collected)
 
         while True:
             self._reconcile_trade_state(
@@ -232,6 +244,7 @@ class ManualTradeService:
                 submit_result=submit_result,
                 collected=collected,
             )
+            # print(collected)
             if _is_verification_success(
                 submit_result=submit_result,
                 collected=collected,
@@ -241,7 +254,6 @@ class ManualTradeService:
             now = self._now(timezone_name)
             if now >= deadline:
                 return collected
-
             remaining_seconds = max((deadline - now).total_seconds(), 0.0)
             time.sleep(min(_QUERY_INTERVAL_SECONDS, remaining_seconds))
 
@@ -300,7 +312,7 @@ class ManualTradeService:
         collected: _CollectedEvents,
         event: _OrderStatusQueryEvent | _ExecutionReportsQueryEvent,
     ) -> None:
-        """消费内部查询事件，更新当前聚合状态。"""
+        """如果当前收到的是查单事件，就按查单规则更新聚合状态；不然就按查成交规则更新聚合状态。"""
         if isinstance(event, _OrderStatusQueryEvent):
             self._apply_order_status_event(collected=collected, event=event)
             return
@@ -343,7 +355,9 @@ class ManualTradeService:
             event.avg_price,
         )
 
-    def _to_order_status_event(self, snapshot: OrderStatusSnapshot) -> _OrderStatusQueryEvent:
+    def _to_order_status_event(
+        self, snapshot: OrderStatusSnapshot
+    ) -> _OrderStatusQueryEvent:
         """把查单快照标准化为内部订单事件。"""
         return _OrderStatusQueryEvent(
             broker_order_id=snapshot.broker_order_id,
@@ -387,7 +401,9 @@ class ManualTradeService:
             symbol=request.symbol,
             requested_volume=request.volume,
             price_type=request.price_type,
-            submit_accepted=submit_result.accepted if submit_result is not None else False,
+            submit_accepted=(
+                submit_result.accepted if submit_result is not None else False
+            ),
             cl_ord_id=submit_result.cl_ord_id if submit_result is not None else None,
             broker_order_id=collected.broker_order_id,
             order_status_confirmed=collected.order_status_confirmed,
@@ -469,7 +485,10 @@ class ManualTradeService:
 def _resolve_failure_message(collected: _CollectedEvents) -> str:
     """把当前已知状态翻译为更具体的失败说明。"""
     if collected.order_status_confirmed and collected.last_order_status is not None:
-        if collected.last_order_status == "filled" and not collected.execution_status_confirmed:
+        if (
+            collected.last_order_status == "filled"
+            and not collected.execution_status_confirmed
+        ):
             return "委托已成交，但成交明细未确认"
         if collected.last_order_status not in _TERMINAL_ORDER_STATUSES:
             return f"委托状态已确认但尚未到终态: {collected.last_order_status}"
