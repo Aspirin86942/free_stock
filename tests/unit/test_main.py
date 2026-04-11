@@ -241,6 +241,24 @@ def test_parse_cli_args_accepts_m3_once_mode() -> None:
     assert args.mode == "m3"
     assert args.once is True
     assert args.max_rounds is None
+    assert args.reconcile_timeout_seconds == 5
+
+
+def test_parse_cli_args_accepts_m3_reconcile_timeout_seconds() -> None:
+    args = main.parse_cli_args(
+        [
+            "--config",
+            "config/sim_account.yaml",
+            "--mode",
+            "m3",
+            "--once",
+            "--reconcile-timeout-seconds",
+            "7",
+        ]
+    )
+
+    assert args.mode == "m3"
+    assert args.reconcile_timeout_seconds == 7
 
 
 def test_parse_cli_args_rejects_once_outside_m2() -> None:
@@ -315,10 +333,20 @@ def test_main_dispatches_to_m3(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         sys,
         "argv",
-        ["main.py", "--config", "config/sim_account.yaml", "--mode", "m3", "--once"],
+        [
+            "main.py",
+            "--config",
+            "config/sim_account.yaml",
+            "--mode",
+            "m3",
+            "--once",
+            "--reconcile-timeout-seconds",
+            "7",
+        ],
     )
 
     assert main.main() == 0
     assert captured["config_path"] == Path("config/sim_account.yaml")
     assert captured["once"] is True
     assert captured["max_rounds"] is None
+    assert captured["reconcile_timeout_seconds"] == 7

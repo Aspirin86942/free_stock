@@ -254,6 +254,7 @@ def run_m3_execution(
     config_path: Path,
     once: bool,
     max_rounds: int | None,
+    reconcile_timeout_seconds: int,
 ) -> int:
     """执行 M3 自动卖出闭环并输出结构化结果。"""
     config = load_config(config_path)
@@ -268,7 +269,8 @@ def run_m3_execution(
     service = M3ExecutionService(
         trade_gateway=trade_gateway,
         market_gateway=market_gateway,
-        state_manager=M3PositionStateManager(logger),
+        decision_state_manager=M2StateManager(logger),
+        execution_state_manager=M3PositionStateManager(logger),
         decision_engine=M2DecisionEngine(),
         logger=logger,
     )
@@ -276,7 +278,11 @@ def run_m3_execution(
     round_no = 1
     while True:
         try:
-            report = service.run_round(config=config, round_no=round_no)
+            report = service.run_round(
+                config=config,
+                round_no=round_no,
+                reconcile_timeout_seconds=reconcile_timeout_seconds,
+            )
         except Exception as exc:
             # M3 是真实执行链路，单轮异常直接中止，避免在不确定状态下继续发单。
             logger.error(
@@ -322,7 +328,15 @@ def run_m3_execution(
                     {
                         "kind": "m3_block_detail",
                         "symbol": block.symbol,
-                        "trigger_reason": block.trigger_reason,
+                        "decision_lifecycle_state": block.decision_lifecycle_state,
+                        "decision_should_sell": block.decision_should_sell,
+                        "decision_can_submit_sell": block.decision_can_submit_sell,
+                        "decision_trigger_reason": block.decision_trigger_reason,
+                        "decision_block_reason": block.decision_block_reason,
+                        "execution_state": block.execution_state,
+                        "execution_cl_ord_id": block.execution_cl_ord_id,
+                        "execution_broker_order_id": block.execution_broker_order_id,
+                        "execution_last_order_status": block.execution_last_order_status,
                         "requested_ratio": str(block.requested_ratio),
                         "total_volume": block.total_volume,
                         "available_volume": block.available_volume,
@@ -342,6 +356,11 @@ def run_m3_execution(
                         "kind": "m3_execution_detail",
                         "symbol": detail.symbol,
                         "change_tags": list(detail.change_tags),
+                        "decision_lifecycle_state": detail.decision_lifecycle_state,
+                        "decision_should_sell": detail.decision_should_sell,
+                        "decision_can_submit_sell": detail.decision_can_submit_sell,
+                        "decision_trigger_reason": detail.decision_trigger_reason,
+                        "decision_block_reason": detail.decision_block_reason,
                         "execution_state": detail.execution_state,
                         "cl_ord_id": detail.cl_ord_id,
                         "broker_order_id": detail.broker_order_id,

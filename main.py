@@ -60,10 +60,21 @@ def build_parser_for_mode(mode: str) -> argparse.ArgumentParser:
         parser.add_argument("--side", choices=("buy", "sell"), required=True)
         return parser
 
-    if mode in {"m2", "m3"}:
+    if mode == "m2":
         group = parser.add_mutually_exclusive_group()
         group.add_argument("--once", action="store_true")
         group.add_argument("--max-rounds", type=_parse_positive_int)
+        return parser
+
+    if mode == "m3":
+        group = parser.add_mutually_exclusive_group()
+        group.add_argument("--once", action="store_true")
+        group.add_argument("--max-rounds", type=_parse_positive_int)
+        parser.add_argument(
+            "--reconcile-timeout-seconds",
+            type=_parse_positive_int,
+            default=5,
+        )
     return parser
 
 
@@ -123,6 +134,7 @@ def main() -> int:
             config_path=config_path,
             once=args.once,
             max_rounds=args.max_rounds,
+            reconcile_timeout_seconds=args.reconcile_timeout_seconds,
         )
     return run_m0_connectivity_check(config_path)
 

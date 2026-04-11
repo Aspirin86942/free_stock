@@ -360,7 +360,15 @@ def test_run_m3_execution_prints_summary_block_and_execution_details(
         block_details=(
             SimpleNamespace(
                 symbol="SHSE.600000",
-                trigger_reason="take_profit_triggered",
+                decision_lifecycle_state="watching",
+                decision_should_sell=True,
+                decision_can_submit_sell=True,
+                decision_trigger_reason="take_profit_triggered",
+                decision_block_reason=None,
+                execution_state=None,
+                execution_cl_ord_id=None,
+                execution_broker_order_id=None,
+                execution_last_order_status=None,
                 requested_ratio=Decimal("1.0"),
                 total_volume=100,
                 available_volume=0,
@@ -382,6 +390,11 @@ def test_run_m3_execution_prints_summary_block_and_execution_details(
             SimpleNamespace(
                 symbol="SHSE.600036",
                 change_tags=("submit_accepted", "order_status_updated"),
+                decision_lifecycle_state="watching",
+                decision_should_sell=True,
+                decision_can_submit_sell=True,
+                decision_trigger_reason="take_profit_triggered",
+                decision_block_reason=None,
                 execution_state="submitted",
                 cl_ord_id="CL_1",
                 broker_order_id="BK_1",
@@ -436,13 +449,16 @@ def test_run_m3_execution_prints_summary_block_and_execution_details(
         config_path=Path("config/sim_account.yaml"),
         once=True,
         max_rounds=None,
+        reconcile_timeout_seconds=7,
     )
 
     lines = [line for line in capsys.readouterr().out.splitlines() if line]
     assert exit_code == 0
     assert '"kind": "m3_round_summary"' in lines[0]
     assert '"kind": "m3_block_detail"' in lines[1]
+    assert '"decision_lifecycle_state": "watching"' in lines[1]
     assert '"kind": "m3_execution_detail"' in lines[2]
+    assert '"decision_trigger_reason": "take_profit_triggered"' in lines[2]
 
 
 def test_run_m3_execution_returns_nonzero_when_round_raises(
@@ -482,6 +498,7 @@ def test_run_m3_execution_returns_nonzero_when_round_raises(
         config_path=Path("config/sim_account.yaml"),
         once=True,
         max_rounds=None,
+        reconcile_timeout_seconds=7,
     )
 
     payload = json.loads(capsys.readouterr().out)
