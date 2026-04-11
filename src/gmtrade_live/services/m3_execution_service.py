@@ -257,8 +257,15 @@ class M3ExecutionService:
         self._execution_state_manager.update_state(
             symbol,
             M3ExecutionState.submitting,
+            cl_ord_id=None,
+            broker_order_id=None,
             requested_volume=requested_volume,
+            filled_volume=0,
             remaining_volume=requested_volume,
+            submit_accepted=None,
+            last_order_status=None,
+            rejection_reason=None,
+            avg_price=None,
             message="submitting",
         )
         result = self._trade_gateway.submit_order(
@@ -277,9 +284,12 @@ class M3ExecutionService:
                 cl_ord_id=result.cl_ord_id,
                 broker_order_id=result.broker_order_id,
                 requested_volume=requested_volume,
+                filled_volume=0,
                 remaining_volume=requested_volume,
                 submit_accepted=False,
+                last_order_status=None,
                 rejection_reason=result.message,
+                avg_price=None,
                 event_time=result.event_time,
                 message=result.message,
             )
@@ -300,9 +310,12 @@ class M3ExecutionService:
             cl_ord_id=result.cl_ord_id,
             broker_order_id=result.broker_order_id,
             requested_volume=requested_volume,
+            filled_volume=0,
             remaining_volume=requested_volume,
             submit_accepted=True,
             last_order_status="submitted",
+            rejection_reason=None,
+            avg_price=None,
             event_time=result.event_time,
             message=result.message,
         )

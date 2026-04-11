@@ -346,3 +346,51 @@ def test_run_round_does_not_log_filled_state_with_zero_filled_volume() -> None:
     assert not any("filled_volume=0" in message for message in filled_logs)
     assert any("filled_volume=100" in message for message in filled_logs)
     assert report.execution_details[-1].filled_volume == 100
+
+
+def test_new_submit_clears_previous_order_filled_fields() -> None:
+    class MultiSubmitGateway(SequencedTradeGateway):
+        def submit_order(self, request):
+            self.submit_calls += 1
+            self.submitted_requests.append(request)
+            return OrderSubmitResult(
+                accepted=True,
+                cl_ord_id=f"CL_{self.submit_calls}",
+                broker_order_id=f"BK_{self.submit_calls}",
+                symbol=request.symbol,
+                message="accepted",
+                raw_status="1",
+                event_time=_now(),
+            )
+
+    gateway = MultiSubmitGateway(
+        positions=(_position(volume=100, available_volume=100),),
+        order_statuses=[
+            ("filled", 100, 0, "BK_1"),
+            ("pending_new", 0, 0, None),
+        ],
+        execution_reports=[
+            (_execution(100),),
+            (),
+        ],
+    )
+    service = M3ExecutionService(
+        trade_gateway=gateway,
+        market_gateway=FakeMarketGateway(),
+        decision_state_manager=M2StateManager(logging.getLogger("test")),
+        execution_state_manager=M3PositionStateManager(logger=None),
+        decision_engine=M2DecisionEngine(),
+        logger=logging.getLogger("test"),
+        clock=_now,
+        timer=FakeTimer([0.0, 0.1, 0.2, 1.0, 1.1, 6.2]),
+        sleep=lambda seconds: None,
+    )
+
+    first_round = service.run_round(config=_config(ratio="1.0"), round_no=1, reconcile_timeout_seconds=5)
+    second_round = service.run_round(config=_config(ratio="1.0"), round_no=2, reconcile_timeout_seconds=5)
+
+    assert first_round.execution_details[-1].execution_state == "filled"
+    assert second_round.execution_details[0].cl_ord_id == "CL_2"
+    assert second_round.execution_details[0].filled_volume == 0
+    assert second_round.execution_details[0].avg_price is None
+    assert second_round.execution_details[0].last_order_status == "pending_new"
