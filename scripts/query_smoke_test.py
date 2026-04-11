@@ -12,7 +12,7 @@ from gm.enum import OrderSide_Buy, OrderType_Limit, PositionEffect_Open
 
 from gmtrade_live.config import load_config
 from gmtrade_live.gateways.gmtrade_trade_gateway import (
-    GMTradeQueryGateway,
+    GMTradeGateway,
     _as_datetime_or_now,
     _extract_first_record,
     _is_submit_accepted,
@@ -103,7 +103,7 @@ def _should_stop_wait(order_snapshot: OrderStatusSnapshot | None) -> bool:
 
 def _wait_for_order_status(
     *,
-    gateway: GMTradeQueryGateway,
+    gateway: GMTradeGateway,
     cl_ord_id: str,
     symbol: str,
 ) -> OrderStatusSnapshot | None:
@@ -132,7 +132,7 @@ def run_query_smoke_test(config_path: Path) -> dict[str, object]:
     logger.addHandler(logging.StreamHandler())
 
     api_module = importlib.import_module("gm.api")
-    gateway = GMTradeQueryGateway(api_module=api_module, account_id=config.account_id)
+    gateway = GMTradeGateway(api_module=api_module, account_id=config.account_id)
 
     gateway.connect(config)
     print("query smoke test started")

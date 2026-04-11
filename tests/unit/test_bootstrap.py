@@ -65,7 +65,7 @@ def test_run_m1_manual_trade_prints_verification_passed(
 
     monkeypatch.setattr(bootstrap, "load_config", lambda path: config)
     monkeypatch.setattr(bootstrap, "setup_logging", lambda *args, **kwargs: SimpleNamespace())
-    monkeypatch.setattr(bootstrap, "GMTradeQueryGateway", FakeGateway)
+    monkeypatch.setattr(bootstrap, "GMTradeGateway", FakeGateway)
     monkeypatch.setattr(bootstrap, "ManualTradeService", FakeService)
 
     exit_code = bootstrap.run_m1_manual_trade(
@@ -143,7 +143,7 @@ def test_run_m1_manual_trade_returns_nonzero_when_verification_failed(
 
     monkeypatch.setattr(bootstrap, "load_config", lambda path: config)
     monkeypatch.setattr(bootstrap, "setup_logging", lambda *args, **kwargs: SimpleNamespace())
-    monkeypatch.setattr(bootstrap, "GMTradeQueryGateway", FakeGateway)
+    monkeypatch.setattr(bootstrap, "GMTradeGateway", FakeGateway)
     monkeypatch.setattr(bootstrap, "ManualTradeService", FakeService)
 
     exit_code = bootstrap.run_m1_manual_trade(
@@ -235,7 +235,7 @@ def test_run_m2_dry_run_prints_summary_and_change_details(monkeypatch, capsys) -
             warning=lambda *a, **k: None,
         ),
     )
-    monkeypatch.setattr(bootstrap, "GMTradeQueryGateway", lambda: FakeGateway())
+    monkeypatch.setattr(bootstrap, "GMTradeGateway", lambda: FakeGateway())
     monkeypatch.setattr(bootstrap, "GMCurrentQuoteGateway", lambda: FakeGateway())
     monkeypatch.setattr(bootstrap, "M2StateManager", lambda logger: SimpleNamespace())
     monkeypatch.setattr(bootstrap, "M2DecisionEngine", lambda: SimpleNamespace())
@@ -295,7 +295,7 @@ def test_run_m2_dry_run_logs_and_continues_after_round_exception(monkeypatch, ca
             error=lambda message, *a, **k: logger_calls.append(message % a if a else message),
         ),
     )
-    monkeypatch.setattr(bootstrap, "GMTradeQueryGateway", lambda: FakeGateway())
+    monkeypatch.setattr(bootstrap, "GMTradeGateway", lambda: FakeGateway())
     monkeypatch.setattr(bootstrap, "GMCurrentQuoteGateway", lambda: FakeGateway())
     monkeypatch.setattr(bootstrap, "M2StateManager", lambda logger: SimpleNamespace())
     monkeypatch.setattr(bootstrap, "M2DecisionEngine", lambda: SimpleNamespace())

@@ -255,7 +255,7 @@ def run_m1_manual_trade(
     """执行 M1 手工交易验证并输出最终交易报告。"""
     config = load_config(config_path)
     logger = setup_logging(config.strategy_name, config.log_dir)
-    gateway = GMTradeQueryGateway(account_id=config.account_id)
+    gateway = GMTradeGateway(account_id=config.account_id)
 
     gateway.connect(config)
 
@@ -466,7 +466,7 @@ assert api.last_order_kwargs["position_effect"] == PositionEffect_Close
 ```python
 def test_gm_api_gateway_submits_buy_order_via_query_driven_path() -> None:
     api = FakeGMApi()
-    gateway = GMTradeQueryGateway(api_module=api, account_id="demo-account")
+    gateway = GMTradeGateway(api_module=api, account_id="demo-account")
     config = _build_config()
 
     gateway.connect(config)
@@ -624,7 +624,7 @@ assert report.side == "sell"
 ```python
 def test_m1_manual_trade_fake_sdk_buy_integration(monkeypatch) -> None:
     api = FakeGMApi()
-    gateway = GMTradeQueryGateway(api_module=api, account_id="demo-account")
+    gateway = GMTradeGateway(api_module=api, account_id="demo-account")
     monkeypatch.setattr(
         gateway_module,
         "_fetch_execution_reports",

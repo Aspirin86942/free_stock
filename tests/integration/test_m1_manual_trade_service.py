@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 
 from gmtrade_live.config import AppConfig
 import gmtrade_live.gateways.gmtrade_trade_gateway as gateway_module
-from gmtrade_live.gateways.gmtrade_trade_gateway import GMTradeQueryGateway
+from gmtrade_live.gateways.gmtrade_trade_gateway import GMTradeGateway
 from gmtrade_live.services.m1_manual_trade import ManualTradeService
 
 
@@ -87,7 +87,7 @@ def _build_config() -> AppConfig:
 
 def test_m1_manual_trade_fake_sdk_integration(monkeypatch) -> None:
     api = FakeGMApi()
-    gateway = GMTradeQueryGateway(api_module=api, account_id="demo-account")
+    gateway = GMTradeGateway(api_module=api, account_id="demo-account")
     monkeypatch.setattr(
         gateway_module,
         "_fetch_execution_reports",
@@ -135,7 +135,7 @@ def test_m1_manual_trade_fake_sdk_integration(monkeypatch) -> None:
 
 def test_m1_manual_trade_fake_sdk_buy_integration(monkeypatch) -> None:
     api = FakeGMApi()
-    gateway = GMTradeQueryGateway(api_module=api, account_id="demo-account")
+    gateway = GMTradeGateway(api_module=api, account_id="demo-account")
     monkeypatch.setattr(
         gateway_module,
         "_fetch_execution_reports",

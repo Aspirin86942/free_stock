@@ -155,7 +155,7 @@ python main.py --config ... --mode m1 ...
 
 ### 5.4 Gateway 设计
 
-`GMTradeQueryGateway.submit_order()` 从单向实现改为按 `request.side` 映射下单参数。
+`GMTradeGateway.submit_order()` 从单向实现改为按 `request.side` 映射下单参数。
 
 映射规则：
 

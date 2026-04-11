@@ -30,7 +30,7 @@ from gmtrade_live.models import (
 from gmtrade_live.precision import normalize_amount, normalize_price
 
 
-class GMTradeQueryGateway:
+class GMTradeGateway:
     """负责交易、查单和查成交的统一入口。"""
 
     def __init__(
@@ -226,10 +226,6 @@ class GMTradeQueryGateway:
                 )
             )
         return tuple(snapshots)
-
-GMTradeGateway = GMTradeQueryGateway
-
-
 def _pick(payload: dict[str, Any], *keys: str) -> Any:
     """读取必填字段；缺失时抛出结构化错误。"""
     for key in keys:

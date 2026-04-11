@@ -6,7 +6,7 @@
 
 **Architecture:** M2 新增专用的决策态模型、`M2StateManager`、`M2DecisionEngine` 和 `M2DryRunService`。`main.py --mode m2` 通过现有的 query gateway 与 market gateway 读取持仓和行情，由 `run_m2_dry_run()` 驱动连续轮询；现有 `state.py` 保留给 M3 执行态，不直接承接 M2 主逻辑。`M2RoundReport` 和 `M2ChangeEvent` 是对内稳定契约，后续状态机或状态表应消费这些对象或其规范化结果，CLI JSON 只是投影。
 
-**Tech Stack:** Python 3.10+, pytest, stdlib `argparse/json/logging/time/zoneinfo/dataclasses`, `Decimal`, 现有 `GMTradeQueryGateway`, `GMCurrentQuoteGateway`
+**Tech Stack:** Python 3.10+, pytest, stdlib `argparse/json/logging/time/zoneinfo/dataclasses`, `Decimal`, 现有 `GMTradeGateway`, `GMCurrentQuoteGateway`
 
 ---
 
@@ -1316,7 +1316,7 @@ def test_run_m2_dry_run_prints_summary_and_change_details(monkeypatch, capsys) -
             warning=lambda *a, **k: None,
         ),
     )
-    monkeypatch.setattr(bootstrap, "GMTradeQueryGateway", lambda: FakeGateway())
+    monkeypatch.setattr(bootstrap, "GMTradeGateway", lambda: FakeGateway())
     monkeypatch.setattr(bootstrap, "GMCurrentQuoteGateway", lambda: FakeGateway())
     monkeypatch.setattr(bootstrap, "M2StateManager", lambda logger: SimpleNamespace())
     monkeypatch.setattr(bootstrap, "M2DecisionEngine", lambda: SimpleNamespace())
@@ -1427,7 +1427,7 @@ def run_m2_dry_run(
 ) -> int:
     config = load_config(config_path)
     logger = setup_logging(config.strategy_name, config.log_dir)
-    trade_gateway = GMTradeQueryGateway()
+    trade_gateway = GMTradeGateway()
     market_gateway = GMCurrentQuoteGateway()
 
     trade_gateway.connect(config)

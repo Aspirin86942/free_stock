@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 from gmtrade_live.config import load_config
 from gmtrade_live.gateways.gm_market_gateway import GMCurrentQuoteGateway
-from gmtrade_live.gateways.gmtrade_trade_gateway import GMTradeQueryGateway
+from gmtrade_live.gateways.gmtrade_trade_gateway import GMTradeGateway
 from gmtrade_live.logging_setup import setup_logging
 from gmtrade_live.services.m0_connectivity import ConnectivityCheckService
 from gmtrade_live.services.m1_manual_trade import ManualTradeService
@@ -40,7 +40,7 @@ def run_m0_connectivity_check(config_path: Path) -> int:
     session_state = _resolve_current_session_state(config)
 
     service = ConnectivityCheckService(
-        trade_gateway=GMTradeQueryGateway(),
+        trade_gateway=GMTradeGateway(),
         market_gateway=GMCurrentQuoteGateway(),
         logger=logger,
     )
@@ -81,7 +81,7 @@ def run_m1_manual_trade(
     config = load_config(config_path)
     _resolve_current_session_state(config)
     logger = setup_logging(config.strategy_name, config.log_dir)
-    gateway = GMTradeQueryGateway(account_id=config.account_id)
+    gateway = GMTradeGateway(account_id=config.account_id)
 
     gateway.connect(config)
 
@@ -134,7 +134,7 @@ def run_m2_dry_run(
     config = load_config(config_path)
     _resolve_current_session_state(config)
     logger = setup_logging(config.strategy_name, config.log_dir)
-    trade_gateway = GMTradeQueryGateway()
+    trade_gateway = GMTradeGateway()
     market_gateway = GMCurrentQuoteGateway()
 
     trade_gateway.connect(config)

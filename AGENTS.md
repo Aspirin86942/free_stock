@@ -84,7 +84,7 @@ conda run -n stock_analysis pytest tests/integration/
   ├─ 配置加载、日志初始化、交易时段判断、启动停止控制
   │
 数据接入层 (gateways/)
-  ├─ GMTradeQueryGateway: 账户资金、持仓查询
+  ├─ GMTradeGateway: 账户资金、持仓查询
   ├─ GMCurrentQuoteGateway: 行情数据获取
   ├─ protocols.py: Gateway 接口定义
   │

@@ -19,7 +19,7 @@ from gmtrade_live.config import AppConfig
 from gmtrade_live.errors import ServiceError
 import gmtrade_live.gateways.gmtrade_trade_gateway as gateway_module
 from gmtrade_live.gateways.gm_market_gateway import GMCurrentQuoteGateway
-from gmtrade_live.gateways.gmtrade_trade_gateway import GMTradeQueryGateway
+from gmtrade_live.gateways.gmtrade_trade_gateway import GMTradeGateway
 from gmtrade_live.models import OrderRequest
 
 
@@ -163,9 +163,14 @@ def _build_config() -> AppConfig:
     )
 
 
+def test_trade_gateway_exposes_gmtradegateway_as_canonical_name() -> None:
+    assert gateway_module.GMTradeGateway.__name__ == "GMTradeGateway"
+    assert not hasattr(gateway_module, "GMTradeQueryGateway")
+
+
 def test_gm_api_gateway_connects_and_maps_query_objects() -> None:
     api = FakeGMApi()
-    gateway = GMTradeQueryGateway(api_module=api)
+    gateway = GMTradeGateway(api_module=api)
     config = _build_config()
 
     gateway.connect(config)
@@ -197,7 +202,7 @@ def test_gm_market_gateway_reads_quotes_from_current() -> None:
 
 def test_gm_api_gateway_raises_empty_cash_when_sdk_returns_none() -> None:
     api = FakeGMApiEmptyCash()
-    gateway = GMTradeQueryGateway(api_module=api)
+    gateway = GMTradeGateway(api_module=api)
     config = _build_config()
 
     gateway.connect(config)
@@ -211,7 +216,7 @@ def test_gm_api_gateway_raises_empty_cash_when_sdk_returns_none() -> None:
 def test_gm_api_gateway_handles_missing_timestamp_fields() -> None:
     """测试真实 gm.api 返回数据（没有时间字段）"""
     api = FakeGMApiNoTimestamp()
-    gateway = GMTradeQueryGateway(api_module=api)
+    gateway = GMTradeGateway(api_module=api)
     config = _build_config()
 
     gateway.connect(config)
@@ -237,7 +242,7 @@ def test_gm_api_gateway_handles_missing_timestamp_fields() -> None:
 def test_gm_api_gateway_prefers_available_now_for_intraday_stock_positions() -> None:
     """A 股当日买入不能卖出时，应优先使用 available_now 作为当前可卖数量。"""
     api = FakeGMApiIntradayStockPosition()
-    gateway = GMTradeQueryGateway(api_module=api)
+    gateway = GMTradeGateway(api_module=api)
     config = _build_config()
 
     gateway.connect(config)
@@ -251,7 +256,7 @@ def test_gm_api_gateway_prefers_available_now_for_intraday_stock_positions() -> 
 
 def test_gm_api_gateway_submits_order_via_query_driven_path() -> None:
     api = FakeGMApi()
-    gateway = GMTradeQueryGateway(api_module=api, account_id="demo-account")
+    gateway = GMTradeGateway(api_module=api, account_id="demo-account")
     config = _build_config()
 
     gateway.connect(config)
@@ -282,7 +287,7 @@ def test_gm_api_gateway_submits_order_via_query_driven_path() -> None:
 
 def test_gm_api_gateway_submits_buy_order_via_query_driven_path() -> None:
     api = FakeGMApi()
-    gateway = GMTradeQueryGateway(api_module=api, account_id="demo-account")
+    gateway = GMTradeGateway(api_module=api, account_id="demo-account")
     config = _build_config()
 
     gateway.connect(config)
@@ -307,7 +312,7 @@ def test_gm_api_gateway_submits_buy_order_via_query_driven_path() -> None:
 def test_gm_api_gateway_filters_order_status_by_cl_ord_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    gateway = GMTradeQueryGateway(api_module=FakeGMApi(), account_id="demo-account")
+    gateway = GMTradeGateway(api_module=FakeGMApi(), account_id="demo-account")
 
     monkeypatch.setattr(
         "gmtrade_live.gateways.gmtrade_trade_gateway._fetch_orders",
@@ -361,7 +366,7 @@ def test_gm_api_gateway_filters_order_status_by_cl_ord_id(
 def test_gm_api_gateway_filters_execution_reports_by_cl_ord_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    gateway = GMTradeQueryGateway(api_module=FakeGMApi(), account_id="demo-account")
+    gateway = GMTradeGateway(api_module=FakeGMApi(), account_id="demo-account")
 
     monkeypatch.setattr(
         "gmtrade_live.gateways.gmtrade_trade_gateway._fetch_execution_reports",
