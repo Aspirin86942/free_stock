@@ -478,7 +478,7 @@ class M3ExecutionService:
             symbol,
             _map_execution_state(event.status),
             broker_order_id=event.broker_order_id or snapshot.broker_order_id,
-            filled_volume=max(snapshot.filled_volume, event.filled_volume),
+            filled_volume=_resolve_filled_volume(snapshot=snapshot, event=event),
             remaining_volume=_resolve_remaining_volume(snapshot=snapshot, event=event),
             last_order_status=event.status,
             rejection_reason=event.rejection_reason,
@@ -613,3 +613,25 @@ def _resolve_remaining_volume(
         return snapshot.requested_volume - event.filled_volume
 
     return 0
+
+
+def _resolve_filled_volume(
+    *,
+    snapshot: M3ExecutionStateSnapshot,
+    event: _OrderStatusQueryEvent,
+) -> int:
+    """对 filled/partially_filled 的缺字段快照做保守推断，避免日志出现倒退。"""
+    resolved = max(snapshot.filled_volume, event.filled_volume)
+
+    if event.status == "filled" and snapshot.requested_volume > 0:
+        return max(resolved, snapshot.requested_volume)
+
+    if (
+        event.status == "partially_filled"
+        and event.remaining_volume > 0
+        and snapshot.requested_volume > 0
+    ):
+        inferred = max(snapshot.requested_volume - event.remaining_volume, 0)
+        return max(resolved, inferred)
+
+    return resolved

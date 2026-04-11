@@ -162,6 +162,15 @@ class FakeMarketGateway:
         return [quote for quote in self._quotes if quote.symbol in symbols]
 
 
+class CapturingLogger:
+    def __init__(self) -> None:
+        self.messages: list[str] = []
+
+    def info(self, message: str, *args, **kwargs) -> None:
+        del kwargs
+        self.messages.append(message % args if args else message)
+
+
 def test_run_round_uses_real_m2_state_and_writes_decision_feedback() -> None:
     decision_manager = M2StateManager(logging.getLogger("test"))
     execution_manager = M3PositionStateManager(logger=None)
@@ -192,7 +201,7 @@ def test_run_round_reconciles_new_submit_until_filled_within_shared_budget() -> 
     sleep_calls: list[float] = []
     service = M3ExecutionService(
         trade_gateway=SequencedTradeGateway(
-            available_volume=250,
+            available_volume=201,
             order_statuses=[
                 ("pending_new", 0, 0, None),
                 ("partially_filled", 100, 100, "BK_1"),
@@ -306,3 +315,34 @@ def test_run_round_preserves_submit_broker_order_id_and_remaining_volume_on_bad_
     assert report.execution_details[-1].broker_order_id == "BK_1"
     assert report.execution_details[-1].last_order_status == "pending_new"
     assert report.execution_details[-1].remaining_volume == 200
+
+
+def test_run_round_does_not_log_filled_state_with_zero_filled_volume() -> None:
+    state_logger = CapturingLogger()
+    service = M3ExecutionService(
+        trade_gateway=SequencedTradeGateway(
+            positions=(_position(volume=100, available_volume=100),),
+            order_statuses=[("filled", 0, 0, "BK_1")],
+            execution_reports=[(_execution(100),)],
+        ),
+        market_gateway=FakeMarketGateway(),
+        decision_state_manager=M2StateManager(logging.getLogger("test")),
+        execution_state_manager=M3PositionStateManager(logger=state_logger),
+        decision_engine=M2DecisionEngine(),
+        logger=logging.getLogger("test"),
+        clock=_now,
+        timer=FakeTimer([0.0, 0.1, 0.2]),
+        sleep=lambda seconds: None,
+    )
+
+    report = service.run_round(config=_config(ratio="1.0"), round_no=1, reconcile_timeout_seconds=5)
+
+    filled_logs = [
+        message
+        for message in state_logger.messages
+        if "old_state=submitted new_state=filled" in message
+    ]
+    assert filled_logs
+    assert not any("filled_volume=0" in message for message in filled_logs)
+    assert any("filled_volume=100" in message for message in filled_logs)
+    assert report.execution_details[-1].filled_volume == 100
