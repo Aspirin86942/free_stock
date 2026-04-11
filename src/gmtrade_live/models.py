@@ -237,3 +237,77 @@ class M2RoundReport:
     evaluated_symbols: tuple[EvaluatedSymbol, ...]
     tombstones: tuple[DecisionPositionStateSnapshot, ...]
     change_events: tuple[M2ChangeEvent, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SellQuantityPlan:
+    """单标的卖量规划结果。"""
+
+    symbol: str
+    requested_ratio: Decimal
+    total_volume: int
+    available_volume: int
+    raw_target_volume: int
+    final_target_volume: int
+    promotion_type: str | None
+    block_reason: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class M3BlockDetail:
+    """单标的执行前阻断详情。"""
+
+    symbol: str
+    trigger_reason: str | None
+    requested_ratio: Decimal
+    total_volume: int
+    available_volume: int
+    raw_target_volume: int
+    promotion_type: str | None
+    normalized_target_volume: int
+    block_reason: str
+    evaluated_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class M3ExecutionDetail:
+    """单标的执行链详情。"""
+
+    symbol: str
+    change_tags: tuple[str, ...]
+    execution_state: str
+    cl_ord_id: str | None
+    broker_order_id: str | None
+    requested_volume: int
+    filled_volume: int
+    remaining_volume: int
+    submit_accepted: bool | None
+    last_order_status: str | None
+    rejection_reason: str | None
+    avg_price: Decimal | None
+    event_time: datetime
+    message: str
+
+
+@dataclass(frozen=True, slots=True)
+class M3RoundSummary:
+    """M3 单轮摘要。"""
+
+    round_no: int
+    session_state: str
+    position_count: int
+    candidate_count: int
+    blocked_count: int
+    submitted_count: int
+    open_order_count: int
+    changed_symbol_count: int
+    duration_ms: int
+
+
+@dataclass(frozen=True, slots=True)
+class M3RoundReport:
+    """M3 单轮对外稳定输出。"""
+
+    summary: M3RoundSummary
+    block_details: tuple[M3BlockDetail, ...]
+    execution_details: tuple[M3ExecutionDetail, ...]

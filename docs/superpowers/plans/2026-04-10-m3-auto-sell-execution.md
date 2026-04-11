@@ -425,9 +425,9 @@ def test_build_sell_quantity_plan_blocks_when_final_target_exceeds_available() -
 def test_build_sell_quantity_plan_blocks_when_normalized_target_is_zero() -> None:
     plan = build_sell_quantity_plan(
         symbol="SHSE.600036",
-        total_volume=99,
-        available_volume=99,
-        sell_quantity_ratio=Decimal("0.50"),
+        total_volume=250,
+        available_volume=250,
+        sell_quantity_ratio=Decimal("0.01"),
     )
 
     assert plan.final_target_volume == 0

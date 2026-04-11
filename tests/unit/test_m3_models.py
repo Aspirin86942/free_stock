@@ -1,0 +1,85 @@
+from __future__ import annotations
+
+from datetime import datetime
+from decimal import Decimal
+from zoneinfo import ZoneInfo
+
+from gmtrade_live.models import (
+    M3BlockDetail,
+    M3ExecutionDetail,
+    M3RoundReport,
+    M3RoundSummary,
+    SellQuantityPlan,
+)
+
+
+def _now() -> datetime:
+    return datetime(2026, 4, 10, 10, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+
+
+def test_sell_quantity_plan_carries_final_target_and_promotion_type() -> None:
+    plan = SellQuantityPlan(
+        symbol="SHSE.600036",
+        requested_ratio=Decimal("0.804"),
+        total_volume=250,
+        available_volume=250,
+        raw_target_volume=201,
+        final_target_volume=250,
+        promotion_type="full_position",
+        block_reason=None,
+    )
+
+    assert plan.final_target_volume == 250
+    assert plan.promotion_type == "full_position"
+
+
+def test_m3_round_report_exposes_block_and_execution_details() -> None:
+    report = M3RoundReport(
+        summary=M3RoundSummary(
+            round_no=1,
+            session_state="trading",
+            position_count=1,
+            candidate_count=1,
+            blocked_count=0,
+            submitted_count=1,
+            open_order_count=1,
+            changed_symbol_count=1,
+            duration_ms=10,
+        ),
+        block_details=(
+            M3BlockDetail(
+                symbol="SHSE.600036",
+                trigger_reason="take_profit_triggered",
+                requested_ratio=Decimal("0.80"),
+                total_volume=250,
+                available_volume=201,
+                raw_target_volume=200,
+                promotion_type=None,
+                normalized_target_volume=200,
+                block_reason="sell_quantity_exceeds_available",
+                evaluated_at=_now(),
+            ),
+        ),
+        execution_details=(
+            M3ExecutionDetail(
+                symbol="SHSE.600036",
+                change_tags=("submit_accepted",),
+                execution_state="submitted",
+                cl_ord_id="CL_1",
+                broker_order_id="BK_1",
+                requested_volume=200,
+                filled_volume=0,
+                remaining_volume=200,
+                submit_accepted=True,
+                last_order_status="submitted",
+                rejection_reason=None,
+                avg_price=None,
+                event_time=_now(),
+                message="accepted",
+            ),
+        ),
+    )
+
+    assert report.summary.submitted_count == 1
+    assert report.block_details[0].block_reason == "sell_quantity_exceeds_available"
+    assert report.execution_details[0].cl_ord_id == "CL_1"
