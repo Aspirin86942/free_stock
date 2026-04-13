@@ -95,7 +95,10 @@ conda run -n stock_analysis pytest tests/smoke
 - `M1`：`conda run -n stock_analysis python main.py --config config/sim_account.yaml --mode m1 ...`
 - `M1` 查询链路脚本：[query_smoke_test.py](/D:/Program_python/free_stock/scripts/query_smoke_test.py)
 - `M2`：`conda run -n stock_analysis python main.py --config config/sim_account.yaml --mode m2 --once`
-- `M3`：`conda run -n stock_analysis python main.py --config config/sim_account.yaml --mode m3 --once --reconcile-timeout-seconds <n>`
+- `M3`：`conda run -n stock_analysis python main.py --config config/sim_account.yaml --mode m3 --once`
+  - `--reconcile-timeout-seconds` 为可选参数
+  - 默认值为 `5`
+  - 只有在需要覆盖默认收口预算时才显式传入，例如 `--reconcile-timeout-seconds 7`
 
 M4 要求不是“真实链路每次都跑”，而是：
 
