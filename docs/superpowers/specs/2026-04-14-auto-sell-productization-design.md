@@ -112,6 +112,303 @@
 
 但本次不实现这部分能力，也不在本次代码结构中引入对应正式模块，只要求命名与分层上不要为未来扩展制造耦合障碍。
 
+### 4.4 重构后的伪代码结构
+
+以下伪代码只用于表达重构后的职责分层、复用关系和控制流，不等同于最终实现细节。
+
+#### 4.4.1 共享评估管线 `SellCandidatePipeline`
+
+```python
+class SellCandidatePipeline:
+    def evaluate_round(self, *, config: AppConfig, now: datetime) -> CandidateRound:
+        session_state = resolve_trading_session(
+            now,
+            timezone_name=config.timezone,
+            market_session_mode=config.market_session_mode,
+        )
+
+        positions = tuple(
+            position
+            for position in trade_gateway.get_positions(config.account_id)
+            if position.volume > 0
+        )
+
+        decision_state_store.sync_positions(positions=positions, now=now)
+
+        symbols = [position.symbol for position in positions]
+        quotes = tuple(market_gateway.get_quotes(symbols)) if symbols else ()
+        quote_map = {quote.symbol: quote for quote in quotes}
+
+        evaluated_candidates: list[SellCandidate] = []
+        change_events: list[DecisionChangeEvent] = []
+
+        for position in positions:
+            state = decision_state_store.get_state(position.symbol)
+            if state is None:
+                continue
+
+            decision = decision_engine.evaluate(
+                position=position,
+                quote=quote_map.get(position.symbol),
+                session_state=session_state,
+                state_snapshot=state,
+                config=config,
+                now=now,
+            )
+
+            updated_state = decision_state_store.update_decision_feedback(
+                position.symbol,
+                trigger_reason=decision.trigger_reason,
+                block_reason=decision.block_reason,
+                volume=decision.volume,
+                available_volume=decision.available_volume,
+                sellable_now=decision.sellable_now,
+                decision_time=decision.evaluated_at,
+            )
+
+            candidate = SellCandidate(
+                position=position,
+                quote=quote_map.get(position.symbol),
+                decision=decision,
+                decision_state=updated_state,
+            )
+            evaluated_candidates.append(candidate)
+
+            change_events.extend(
+                decision_change_detector.compare(
+                    symbol=position.symbol,
+                    current_decision=decision,
+                    current_state=updated_state,
+                )
+            )
+
+        return CandidateRound(
+            session_state=session_state,
+            positions=positions,
+            candidates=tuple(evaluated_candidates),
+            change_events=tuple(change_events),
+        )
+```
+
+这个共享评估管线只负责：
+
+- 拉持仓
+- 拉行情
+- 同步决策状态
+- 调用卖出判定
+- 产出候选结果与变化事件
+
+它不负责：
+
+- 发单
+- 查单
+- 成交回报收口
+- 对外日志格式投影
+
+#### 4.4.2 决策观测入口 `DecisionObserverService`
+
+```python
+class DecisionObserverService:
+    def run_round(self, *, config: AppConfig, round_no: int) -> DecisionObservationReport:
+        started_at = timer()
+        now = clock()
+
+        candidate_round = candidate_pipeline.evaluate_round(
+            config=config,
+            now=now,
+        )
+
+        return DecisionObservationReport(
+            summary=build_decision_summary(
+                round_no=round_no,
+                session_state=candidate_round.session_state,
+                candidates=candidate_round.candidates,
+                change_events=candidate_round.change_events,
+                duration_ms=elapsed_ms(started_at, timer()),
+            ),
+            change_events=candidate_round.change_events,
+        )
+```
+
+```python
+def run_decision_observer(config_path: Path, once: bool, max_rounds: int | None) -> int:
+    config = load_config(config_path)
+    connect_gateways_for_observer(config)
+
+    round_no = 1
+    while True:
+        log_round_started(entry="decision_observer", round_no=round_no)
+        try:
+            report = decision_observer.run_round(config=config, round_no=round_no)
+        except Exception as exc:
+            emit_decision_round_error(round_no=round_no, exc=exc)
+            if once or reached_max_rounds(round_no, max_rounds):
+                return 1
+        else:
+            emit_decision_round_summary(report.summary)
+            emit_decision_change_details(report.change_events)
+            if once or reached_max_rounds(round_no, max_rounds):
+                return 0
+
+        sleep(config.poll_interval_seconds)
+        round_no += 1
+```
+
+决策观测入口的关键语义：
+
+- 复用共享评估管线
+- 只投影观测摘要和变化详情
+- 不允许发单
+- 单轮异常按既有观测语义记录并决定是否继续下一轮
+
+#### 4.4.3 自动卖出入口 `AutoSellService`
+
+```python
+class AutoSellService:
+    def run_round(
+        self,
+        *,
+        config: AppConfig,
+        round_no: int,
+        reconcile_timeout_seconds: int,
+    ) -> AutoSellRoundReport:
+        started_at = timer()
+        now = clock()
+
+        candidate_round = candidate_pipeline.evaluate_round(
+            config=config,
+            now=now,
+        )
+
+        block_details: list[SellBlockDetail] = []
+        execution_details: list[SellExecutionDetail] = []
+        tracked_symbols: dict[str, PositionSnapshot] = {}
+
+        for candidate in candidate_round.candidates:
+            if not candidate.decision.can_submit_sell:
+                continue
+
+            if order_execution_state_store.has_open_order(candidate.position.symbol):
+                tracked_symbols[candidate.position.symbol] = candidate.position
+                continue
+
+            quantity_plan = sell_quantity_policy.plan(
+                symbol=candidate.position.symbol,
+                total_volume=candidate.position.volume,
+                available_volume=candidate.position.available_volume,
+                sell_quantity_ratio=config.sell_quantity_ratio,
+            )
+
+            if quantity_plan.block_reason is not None:
+                block_details.append(
+                    build_sell_block_detail(candidate, quantity_plan)
+                )
+                continue
+
+            accepted, immediate_detail = submit_new_order(
+                candidate=candidate,
+                requested_volume=quantity_plan.final_target_volume,
+                round_no=round_no,
+                account_id=config.account_id,
+            )
+
+            if immediate_detail is not None:
+                execution_details.append(immediate_detail)
+                continue
+
+            if accepted:
+                tracked_symbols[candidate.position.symbol] = candidate.position
+
+        execution_details.extend(
+            reconcile_open_orders(
+                tracked_symbols=tracked_symbols,
+                reconcile_timeout_seconds=reconcile_timeout_seconds,
+                round_no=round_no,
+                account_id=config.account_id,
+            )
+        )
+
+        return AutoSellRoundReport(
+            summary=build_auto_sell_summary(
+                round_no=round_no,
+                session_state=candidate_round.session_state,
+                candidates=candidate_round.candidates,
+                block_details=block_details,
+                execution_details=execution_details,
+                duration_ms=elapsed_ms(started_at, timer()),
+            ),
+            block_details=tuple(block_details),
+            execution_details=tuple(execution_details),
+        )
+```
+
+```python
+def run_auto_sell(
+    config_path: Path,
+    once: bool,
+    max_rounds: int | None,
+    reconcile_timeout_seconds: int,
+) -> int:
+    config = load_config(config_path)
+    connect_gateways_for_trading(config)
+
+    round_no = 1
+    while True:
+        log_round_started(entry="auto_sell", round_no=round_no)
+        try:
+            report = auto_sell_service.run_round(
+                config=config,
+                round_no=round_no,
+                reconcile_timeout_seconds=reconcile_timeout_seconds,
+            )
+        except Exception as exc:
+            emit_auto_sell_round_error(round_no=round_no, exc=exc)
+            return 1
+
+        emit_auto_sell_round_summary(report.summary)
+        emit_sell_block_details(report.block_details)
+        emit_sell_execution_details(report.execution_details)
+
+        if once or reached_max_rounds(round_no, max_rounds):
+            return 0
+
+        sleep(config.poll_interval_seconds)
+        round_no += 1
+```
+
+自动卖出入口的关键语义：
+
+- 与决策观测入口复用同一条共享评估管线
+- 在候选结果之上继续做卖量规划、发单、轮询和收口
+- 保持真实交易语义
+- 单轮异常立即退出，避免在不确定状态下继续发单
+
+#### 4.4.4 调试脚本 `tools/debug`
+
+```python
+def check_connectivity(config_path: Path) -> int:
+    config = load_config(config_path)
+    connect_trade_gateway(config)
+    connect_market_gateway(config)
+    summary = collect_account_and_quote_summary(config)
+    print_json(summary)
+    return 0
+
+
+def manual_trade(...trade_args...) -> int:
+    config = load_config(config_path)
+    connect_trade_gateway(config)
+    report = submit_and_verify_manual_order(config, ...trade_args...)
+    print_json(report)
+    return 0 if report.verification_passed else 1
+```
+
+调试脚本与正式产品入口的关系：
+
+- 可复用 gateway、模型和部分底层能力
+- 不复用正式自动卖出入口
+- 不进入正式交付口径
+
 ## 5. 模块职责与共享层
 
 ### 5.1 双状态模型保留
