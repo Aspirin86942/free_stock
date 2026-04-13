@@ -46,7 +46,7 @@ def verify_account(account_id: str, token: str) -> dict:
         print("❌ 资金查询失败：返回 None")
         return {"success": False, "error": "empty_cash"}
 
-    print(f"✅ 资金查询成功")
+    print("✅ 资金查询成功")
     print(f"  账户ID: {cash.account_id}")
     print(f"  总资产: {cash.nav}")
     print(f"  可用资金: {cash.available}")

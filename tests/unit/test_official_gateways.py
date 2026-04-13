@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import sys
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
-import sys
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
@@ -15,9 +15,9 @@ from gm.enum import (
     PositionEffect_Open,
 )
 
+import gmtrade_live.gateways.gmtrade_trade_gateway as gateway_module
 from gmtrade_live.config import AppConfig
 from gmtrade_live.errors import ServiceError
-import gmtrade_live.gateways.gmtrade_trade_gateway as gateway_module
 from gmtrade_live.gateways.gm_market_gateway import GMCurrentQuoteGateway
 from gmtrade_live.gateways.gmtrade_trade_gateway import GMTradeGateway
 from gmtrade_live.models import OrderRequest

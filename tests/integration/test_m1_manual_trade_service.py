@@ -1,14 +1,14 @@
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from decimal import Decimal
-import logging
 from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
-from gmtrade_live.config import AppConfig
 import gmtrade_live.gateways.gmtrade_trade_gateway as gateway_module
+from gmtrade_live.config import AppConfig
 from gmtrade_live.gateways.gmtrade_trade_gateway import GMTradeGateway
 from gmtrade_live.services.m1_manual_trade import ManualTradeService
 

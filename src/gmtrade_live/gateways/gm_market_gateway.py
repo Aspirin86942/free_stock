@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 import importlib
+from datetime import datetime
 from typing import Any
 
 from gmtrade_live.errors import ServiceError

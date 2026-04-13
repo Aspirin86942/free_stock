@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 import logging
+from datetime import datetime
 from time import perf_counter
 from zoneinfo import ZoneInfo
 

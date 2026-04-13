@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
-import logging
-import time
 from zoneinfo import ZoneInfo
 
 from gmtrade_live.config import AppConfig
 from gmtrade_live.errors import ServiceError
+from gmtrade_live.gateways.protocols import TradeGateway
 from gmtrade_live.models import (
     OrderExecutionSnapshot,
     OrderRequest,
@@ -18,8 +19,6 @@ from gmtrade_live.models import (
     OrderSubmitResult,
     TradeReport,
 )
-from gmtrade_live.gateways.protocols import TradeGateway
-
 
 _QUERY_INTERVAL_SECONDS = 0.5
 _TERMINAL_ORDER_STATUSES = {

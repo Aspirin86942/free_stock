@@ -1,10 +1,11 @@
 from datetime import datetime
 from pathlib import Path
-import pytest
 from zoneinfo import ZoneInfo
 
-from gmtrade_live.logging_setup import setup_logging, setup_order_audit_logger
+import pytest
+
 from gmtrade_live.errors import ServiceError
+from gmtrade_live.logging_setup import setup_logging, setup_order_audit_logger
 from gmtrade_live.session import TradingSessionState, resolve_trading_session
 
 
