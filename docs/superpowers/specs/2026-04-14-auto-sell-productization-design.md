@@ -121,32 +121,47 @@
 ```python
 class SellCandidatePipeline:
     def evaluate_round(self, *, config: AppConfig, now: datetime) -> CandidateRound:
+        # 先解析交易时段。这里统一在共享评估管线里做，是为了让
+        # 决策观测入口和自动卖出入口看到同一份会话语义，避免一个说可卖、
+        # 另一个说不可卖的分叉事实。
         session_state = resolve_trading_session(
             now,
             timezone_name=config.timezone,
             market_session_mode=config.market_session_mode,
         )
 
+        # 这里只保留当前仍有仓位的标的。零仓位标的不进入本轮候选评估，
+        # 这样共享评估层只处理“当前真实持仓”的事实，不承担历史订单收口。
         positions = tuple(
             position
             for position in trade_gateway.get_positions(config.account_id)
             if position.volume > 0
         )
 
+        # 先同步持仓到决策状态仓库。这样后续做卖出判断时，看到的是已经
+        # 与当前持仓对齐的状态，而不是上一轮残留状态。
         decision_state_store.sync_positions(positions=positions, now=now)
 
+        # 批量取行情并按 symbol 建索引。共享评估层负责把外部行情整理成
+        # 可消费的数据形态，但不负责决定如何对外展示。
         symbols = [position.symbol for position in positions]
         quotes = tuple(market_gateway.get_quotes(symbols)) if symbols else ()
         quote_map = {quote.symbol: quote for quote in quotes}
 
+        # candidates 是本轮评估后的完整候选事实，
+        # change_events 是给观测入口或日志系统消费的变化投影。
         evaluated_candidates: list[SellCandidate] = []
         change_events: list[DecisionChangeEvent] = []
 
         for position in positions:
+            # 理论上 sync 后应该能拿到状态；这里仍做空值保护，
+            # 避免底层状态仓库异常时把共享评估层直接写成隐式假设。
             state = decision_state_store.get_state(position.symbol)
             if state is None:
                 continue
 
+            # 卖出判定只回答“该不该卖、为什么、当前能否提单”，
+            # 不在这里做卖量规划和订单动作，避免决策逻辑污染执行层。
             decision = decision_engine.evaluate(
                 position=position,
                 quote=quote_map.get(position.symbol),
@@ -156,6 +171,8 @@ class SellCandidatePipeline:
                 now=now,
             )
 
+            # 把判定结果回写到决策状态仓库。这样下一轮能基于已知触发事实、
+            # 阻断原因和可卖数量继续推进，而不是每轮都像“第一次看见”。
             updated_state = decision_state_store.update_decision_feedback(
                 position.symbol,
                 trigger_reason=decision.trigger_reason,
@@ -166,6 +183,9 @@ class SellCandidatePipeline:
                 decision_time=decision.evaluated_at,
             )
 
+            # SellCandidate 是共享评估层的核心输出。
+            # 它把“持仓事实 + 行情事实 + 判定结果 + 状态快照”组合在一起，
+            # 后续观测入口和自动卖出入口都围绕它分叉，不再重新拉数或重算。
             candidate = SellCandidate(
                 position=position,
                 quote=quote_map.get(position.symbol),
@@ -174,6 +194,8 @@ class SellCandidatePipeline:
             )
             evaluated_candidates.append(candidate)
 
+            # 变化检测也放在共享评估层，是为了保证：
+            # 同一轮里观测入口看到的变化，和自动卖出入口理解的变化来源一致。
             change_events.extend(
                 decision_change_detector.compare(
                     symbol=position.symbol,
@@ -182,6 +204,9 @@ class SellCandidatePipeline:
                 )
             )
 
+        # CandidateRound 是“本轮评估事实包”。
+        # 它不带任何订单副作用，目的是让上层服务在同一份事实基础上
+        # 各自做观测输出或交易执行。
         return CandidateRound(
             session_state=session_state,
             positions=positions,
@@ -213,11 +238,14 @@ class DecisionObserverService:
         started_at = timer()
         now = clock()
 
+        # 观测入口只消费共享评估结果，不允许在这里自己补交易逻辑。
         candidate_round = candidate_pipeline.evaluate_round(
             config=config,
             now=now,
         )
 
+        # 这里把共享评估结果投影成“观测报告”。
+        # 观测报告的职责是便于人工排查和系统观测，不是为交易执行服务。
         return DecisionObservationReport(
             summary=build_decision_summary(
                 round_no=round_no,
@@ -233,18 +261,26 @@ class DecisionObserverService:
 ```python
 def run_decision_observer(config_path: Path, once: bool, max_rounds: int | None) -> int:
     config = load_config(config_path)
+    # 观测入口仍需要真实连接柜台和行情，因为它观察的是“当前真实状态”，
+    # 但它只读，不会触发任何下单动作。
     connect_gateways_for_observer(config)
 
     round_no = 1
     while True:
+        # 轮次日志用于还原程序运行节奏。这里明确标识 entry，
+        # 避免继续沿用旧的阶段号 mode。
         log_round_started(entry="decision_observer", round_no=round_no)
         try:
             report = decision_observer.run_round(config=config, round_no=round_no)
         except Exception as exc:
+            # 观测入口沿用“单轮失败可记录”的语义。
+            # 这样在行情抖动、柜台临时异常时，观测任务不会立刻变成一次性脚本。
             emit_decision_round_error(round_no=round_no, exc=exc)
             if once or reached_max_rounds(round_no, max_rounds):
                 return 1
         else:
+            # 只输出观测摘要和变化详情，不输出任何执行详情，
+            # 这是观测入口与自动卖出入口最重要的边界之一。
             emit_decision_round_summary(report.summary)
             emit_decision_change_details(report.change_events)
             if once or reached_max_rounds(round_no, max_rounds):
@@ -275,23 +311,35 @@ class AutoSellService:
         started_at = timer()
         now = clock()
 
+        # 自动卖出入口和观测入口共享同一份候选评估结果。
+        # 这样可以保证：是否该卖、为什么能卖/不能卖，先在共享层达成一致，
+        # 再进入执行层，而不是在执行层偷偷再算一遍。
         candidate_round = candidate_pipeline.evaluate_round(
             config=config,
             now=now,
         )
 
+        # block_details 记录“本轮原本进入候选，但因为卖量规则或执行态被阻断”的事实；
+        # execution_details 记录真实执行态变化；
+        # tracked_symbols 记录本轮要继续轮询收口的标的。
         block_details: list[SellBlockDetail] = []
         execution_details: list[SellExecutionDetail] = []
         tracked_symbols: dict[str, PositionSnapshot] = {}
 
         for candidate in candidate_round.candidates:
+            # 共享评估结果已经判定当前不能提单，则执行层直接跳过。
+            # 执行层不重新解释“为什么不能卖”，只消费决策层结论。
             if not candidate.decision.can_submit_sell:
                 continue
 
+            # 若该标的已有在途订单，不能重复发单。
+            # 这里把它加入 tracked_symbols，交给后续统一轮询收口。
             if order_execution_state_store.has_open_order(candidate.position.symbol):
                 tracked_symbols[candidate.position.symbol] = candidate.position
                 continue
 
+            # 卖量规划独立成策略模块，是为了把“该不该卖”和“卖多少”分开。
+            # 前者属于决策，后者属于执行规则，不应混写在一个引擎里。
             quantity_plan = sell_quantity_policy.plan(
                 symbol=candidate.position.symbol,
                 total_volume=candidate.position.volume,
@@ -299,12 +347,17 @@ class AutoSellService:
                 sell_quantity_ratio=config.sell_quantity_ratio,
             )
 
+            # 若卖量规则阻断，就生成阻断详情给外部消费，
+            # 但不把这种阻断回写成订单执行动作。
             if quantity_plan.block_reason is not None:
                 block_details.append(
                     build_sell_block_detail(candidate, quantity_plan)
                 )
                 continue
 
+            # 提交新单时只负责把“提交阶段的事实”推进进去。
+            # 后续订单状态变化和成交回报统一由 reconcile 阶段处理，
+            # 避免一边提交一边散落查询逻辑。
             accepted, immediate_detail = submit_new_order(
                 candidate=candidate,
                 requested_volume=quantity_plan.final_target_volume,
@@ -312,13 +365,18 @@ class AutoSellService:
                 account_id=config.account_id,
             )
 
+            # immediate_detail 表示提交阶段已经形成可对外输出的执行变化，
+            # 比如立即拒单。此时无需进入后续轮询。
             if immediate_detail is not None:
                 execution_details.append(immediate_detail)
                 continue
 
+            # 只有真正受理成功的订单才进入后续轮询收口集合。
             if accepted:
                 tracked_symbols[candidate.position.symbol] = candidate.position
 
+        # 批量收口的目的是把“本轮刚提交的新单”和“本轮开始前已在途的旧单”
+        # 用同一套轮询逻辑处理，避免两套收口路径长期分叉。
         execution_details.extend(
             reconcile_open_orders(
                 tracked_symbols=tracked_symbols,
@@ -328,6 +386,8 @@ class AutoSellService:
             )
         )
 
+        # 自动卖出报告是执行入口对外的完整轮次事实。
+        # 它在同一轮里同时暴露摘要、阻断详情和执行详情，便于审计与排障。
         return AutoSellRoundReport(
             summary=build_auto_sell_summary(
                 round_no=round_no,
@@ -350,21 +410,31 @@ def run_auto_sell(
     reconcile_timeout_seconds: int,
 ) -> int:
     config = load_config(config_path)
+    # 自动卖出入口连接的是“真实执行链路”。
+    # 和观测入口不同，这里任何后续异常都必须按真实交易链标准处理。
     connect_gateways_for_trading(config)
 
     round_no = 1
     while True:
         log_round_started(entry="auto_sell", round_no=round_no)
         try:
+            # 单轮执行包含：候选评估、卖量规划、发单、查单、成交回报收口。
             report = auto_sell_service.run_round(
                 config=config,
                 round_no=round_no,
                 reconcile_timeout_seconds=reconcile_timeout_seconds,
             )
         except Exception as exc:
+            # 自动卖出入口保持“单轮异常立即退出”的硬约束，
+            # 因为继续运行可能导致重复发单或在未知状态下继续操作。
             emit_auto_sell_round_error(round_no=round_no, exc=exc)
             return 1
 
+        # 正式交易入口对外输出三类事实：
+        # 1. 本轮摘要
+        # 2. 阻断详情
+        # 3. 执行详情
+        # 这样既能看清为什么没发单，也能看清发单后走到了哪一步。
         emit_auto_sell_round_summary(report.summary)
         emit_sell_block_details(report.block_details)
         emit_sell_execution_details(report.execution_details)
@@ -388,6 +458,8 @@ def run_auto_sell(
 ```python
 def check_connectivity(config_path: Path) -> int:
     config = load_config(config_path)
+    # 连通性检查脚本只验证账户、柜台、行情链路是否可用，
+    # 目的是排障，不是进入正式产品主链。
     connect_trade_gateway(config)
     connect_market_gateway(config)
     summary = collect_account_and_quote_summary(config)
@@ -397,6 +469,7 @@ def check_connectivity(config_path: Path) -> int:
 
 def manual_trade(...trade_args...) -> int:
     config = load_config(config_path)
+    # 手工下单脚本用于验证柜台链路和回报收口，不参与自动卖出调度。
     connect_trade_gateway(config)
     report = submit_and_verify_manual_order(config, ...trade_args...)
     print_json(report)
