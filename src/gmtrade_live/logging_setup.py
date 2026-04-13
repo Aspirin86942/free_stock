@@ -30,3 +30,26 @@ def setup_logging(strategy_name: str, log_dir: Path) -> logging.Logger:
     logger.addHandler(stream_handler)
 
     return logger
+
+
+def setup_order_audit_logger(strategy_name: str, log_dir: Path) -> logging.Logger:
+    """
+    初始化独立的 order_audit 日志，仅记录 JSON Lines 原文，便于后端审计。
+    """
+    log_dir.mkdir(parents=True, exist_ok=True)
+
+    logger = logging.getLogger(f"{strategy_name}.order_audit")
+    logger.setLevel(logging.INFO)
+    # 先移除并关闭旧 handler，避免遗留打开的文件句柄。
+    for handler in list(logger.handlers):
+        logger.removeHandler(handler)
+        handler.close()
+    logger.propagate = False
+
+    formatter = logging.Formatter(fmt="%(message)s")
+    # 只保存 message 本体，保持 JSON Lines 原样，方便 downstream 解析。
+    file_handler = logging.FileHandler(log_dir / "order_audit.log", encoding="utf-8")
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+
+    return logger

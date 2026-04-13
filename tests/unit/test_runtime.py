@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from zoneinfo import ZoneInfo
 
-from gmtrade_live.logging_setup import setup_logging
+from gmtrade_live.logging_setup import setup_logging, setup_order_audit_logger
 from gmtrade_live.errors import ServiceError
 from gmtrade_live.session import TradingSessionState, resolve_trading_session
 
@@ -13,6 +13,28 @@ def test_setup_logging_creates_runtime_log_file(tmp_path: Path) -> None:
     logger.info("hello m0")
 
     assert (tmp_path / "runtime.log").exists()
+
+
+def test_setup_order_audit_logger_creates_order_audit_log_file(tmp_path: Path) -> None:
+    logger = setup_order_audit_logger("gmtrade-live-m4", tmp_path)
+    logger.info('{"event":"audit"}')
+    for handler in logger.handlers:
+        handler.flush()
+
+    log_path = tmp_path / "order_audit.log"
+    assert log_path.exists()
+    assert log_path.read_text(encoding="utf-8").strip() == '{"event":"audit"}'
+
+
+def test_setup_order_audit_logger_keeps_single_handler_on_reinit(tmp_path: Path) -> None:
+    logger_initial = setup_order_audit_logger("gmtrade-live-m4", tmp_path)
+    logger_initial.info('{"event":"first"}')
+    handler_before = logger_initial.handlers[0]
+    logger_after = setup_order_audit_logger("gmtrade-live-m4", tmp_path)
+    assert len(logger_after.handlers) == 1
+    assert logger_after.handlers[0] is not handler_before
+    stream = handler_before.stream
+    assert stream is None or getattr(stream, "closed", True)
 
 
 def test_resolve_trading_session_returns_closed_day_on_saturday() -> None:
