@@ -98,3 +98,36 @@ def test_m3_round_report_exposes_block_and_execution_details() -> None:
     assert report.block_details[0].block_reason == "sell_quantity_exceeds_available"
     assert report.execution_details[0].decision_trigger_reason == "take_profit_triggered"
     assert report.execution_details[0].cl_ord_id == "CL_1"
+
+
+def test_m3_execution_detail_exposes_timing_projection() -> None:
+    moment = _now()
+
+    detail = M3ExecutionDetail(
+        symbol="SHSE.600036",
+        change_tags=("terminal_state_reached",),
+        decision_lifecycle_state="watching",
+        decision_should_sell=True,
+        decision_can_submit_sell=True,
+        decision_trigger_reason="take_profit_triggered",
+        decision_block_reason=None,
+        execution_state="filled",
+        cl_ord_id="CL_1",
+        broker_order_id="BK_1",
+        requested_volume=200,
+        filled_volume=200,
+        remaining_volume=0,
+        submit_accepted=True,
+        last_order_status="filled",
+        rejection_reason=None,
+        avg_price=Decimal("10.80"),
+        event_time=moment,
+        message="filled",
+        submit_started_at=moment,
+        submit_accepted_at=moment,
+        terminal_state_at=moment,
+        order_terminal_latency_ms=1200,
+    )
+
+    assert detail.terminal_state_at == moment
+    assert detail.order_terminal_latency_ms == 1200

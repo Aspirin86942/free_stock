@@ -21,6 +21,13 @@ class M3ExecutionState(str, Enum):
     failed = "failed"
 
 
+_TERMINAL_STATES = {
+    M3ExecutionState.filled,
+    M3ExecutionState.cancelled,
+    M3ExecutionState.failed,
+}
+
+
 @dataclass(slots=True)
 class M3ExecutionStateSnapshot:
     """单个标的的执行态快照。"""
@@ -39,6 +46,9 @@ class M3ExecutionStateSnapshot:
     avg_price: Decimal | None = None
     event_time: datetime | None = None
     last_update_time: datetime | None = None
+    submit_started_at: datetime | None = None
+    submit_accepted_at: datetime | None = None
+    terminal_state_at: datetime | None = None
     message: str = ""
 
 
@@ -71,16 +81,30 @@ class M3PositionStateManager:
 
         snapshot.state = new_state
         snapshot.last_update_time = datetime.now()
+        terminal_event_time = kwargs.get("event_time")
+        if not isinstance(terminal_event_time, datetime):
+            terminal_event_time = snapshot.last_update_time
 
+        applied_updates: dict[str, object] = {}
         for key, value in kwargs.items():
+            if key == "terminal_state_at":
+                continue
             if hasattr(snapshot, key):
                 setattr(snapshot, key, value)
+                applied_updates[key] = value
+
+        if new_state in _TERMINAL_STATES and snapshot.terminal_state_at is None:
+            # 终态时间只记录第一次真实终态事件，避免后续轮询或外部传参把原始时点覆盖掉。
+            snapshot.terminal_state_at = terminal_event_time
+            applied_updates["terminal_state_at"] = terminal_event_time
 
         self._cache[symbol] = snapshot
 
         # 这里统一记录状态迁移，是为了后续基于查询驱动链路追溯单标的执行收口过程。
         if self._logger:
-            extra_text = " ".join(f"{key}={value}" for key, value in kwargs.items())
+            extra_text = " ".join(
+                f"{key}={value}" for key, value in applied_updates.items()
+            )
             self._logger.info(
                 "state_change symbol=%s old_state=%s new_state=%s%s",
                 symbol,

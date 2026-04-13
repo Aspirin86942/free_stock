@@ -300,6 +300,10 @@ class M3ExecutionDetail:
     avg_price: Decimal | None
     event_time: datetime
     message: str
+    submit_started_at: datetime | None = None
+    submit_accepted_at: datetime | None = None
+    terminal_state_at: datetime | None = None
+    order_terminal_latency_ms: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
