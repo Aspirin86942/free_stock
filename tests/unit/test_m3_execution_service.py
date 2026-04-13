@@ -24,7 +24,7 @@ from gmtrade_live.services.m3_state_manager import (
 
 
 def _now() -> datetime:
-    return datetime(2026, 4, 11, 10, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+    return datetime(2026, 4, 10, 10, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
 
 
 def _config(*, ratio: str = "0.80") -> AppConfig:
