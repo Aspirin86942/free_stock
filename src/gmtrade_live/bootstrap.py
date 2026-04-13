@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 from gmtrade_live.config import load_config
 from gmtrade_live.gateways.gm_market_gateway import GMCurrentQuoteGateway
 from gmtrade_live.gateways.gmtrade_trade_gateway import GMTradeGateway
-from gmtrade_live.logging_setup import setup_logging
+from gmtrade_live.logging_setup import setup_logging, setup_order_audit_logger
 from gmtrade_live.services.m0_connectivity import ConnectivityCheckService
 from gmtrade_live.services.m1_manual_trade import ManualTradeService
 from gmtrade_live.services.m2_decision_engine import M2DecisionEngine
@@ -152,13 +152,20 @@ def run_m2_dry_run(
 
     round_no = 1
     while True:
+        logger.info(
+            "round_started mode=m2 round=%s once=%s max_rounds=%s",
+            round_no,
+            once,
+            max_rounds,
+        )
         try:
             report = service.run_round(config=config, round_no=round_no)
         except Exception as exc:
             logger.error(
-                "m2_round_failed round=%s error_type=%s error=%s",
+                "round_failed mode=m2 round=%s error_type=%s retryable=%s error=%s",
                 round_no,
                 type(exc).__name__,
+                getattr(exc, "retryable", None),
                 str(exc),
                 exc_info=True,
             )
@@ -176,6 +183,14 @@ def run_m2_dry_run(
             if once or (max_rounds is not None and round_no >= max_rounds):
                 return 1
         else:
+            logger.info(
+                "round_completed mode=m2 round=%s duration_ms=%s session_state=%s position_count=%s changed_symbol_count=%s",
+                round_no,
+                report.summary.duration_ms,
+                report.summary.session_state,
+                report.summary.position_count,
+                report.summary.changed_symbol_count,
+            )
             print(
                 json.dumps(
                     {
@@ -240,7 +255,7 @@ def run_m2_dry_run(
                 return 0
             if report.summary.duration_ms > config.poll_interval_seconds * 1000:
                 logger.warning(
-                    "round_overrun round=%s duration_ms=%s interval_seconds=%s",
+                    "round_overrun mode=m2 round=%s duration_ms=%s interval_seconds=%s",
                     round_no,
                     report.summary.duration_ms,
                     config.poll_interval_seconds,
@@ -260,6 +275,7 @@ def run_m3_execution(
     config = load_config(config_path)
     _resolve_current_session_state(config)
     logger = setup_logging(config.strategy_name, config.log_dir)
+    audit_logger = setup_order_audit_logger(config.strategy_name, config.log_dir)
     trade_gateway = GMTradeGateway()
     market_gateway = GMCurrentQuoteGateway()
 
@@ -273,10 +289,18 @@ def run_m3_execution(
         execution_state_manager=M3PositionStateManager(logger),
         decision_engine=M2DecisionEngine(),
         logger=logger,
+        audit_logger=audit_logger,
     )
 
     round_no = 1
     while True:
+        logger.info(
+            "round_started mode=m3 round=%s once=%s max_rounds=%s reconcile_timeout_seconds=%s",
+            round_no,
+            once,
+            max_rounds,
+            reconcile_timeout_seconds,
+        )
         try:
             report = service.run_round(
                 config=config,
@@ -286,9 +310,10 @@ def run_m3_execution(
         except Exception as exc:
             # M3 是真实执行链路，单轮异常直接中止，避免在不确定状态下继续发单。
             logger.error(
-                "m3_round_failed round=%s error_type=%s error=%s",
+                "round_failed mode=m3 round=%s error_type=%s retryable=%s error=%s",
                 round_no,
                 type(exc).__name__,
+                getattr(exc, "retryable", None),
                 str(exc),
                 exc_info=True,
             )
@@ -305,6 +330,13 @@ def run_m3_execution(
             )
             return 1
 
+        logger.info(
+            "round_completed mode=m3 round=%s duration_ms=%s submitted_count=%s open_order_count=%s",
+            round_no,
+            report.summary.duration_ms,
+            report.summary.submitted_count,
+            report.summary.open_order_count,
+        )
         print(
             json.dumps(
                 {
@@ -377,6 +409,22 @@ def run_m3_execution(
                         ),
                         "event_time": detail.event_time.isoformat(),
                         "message": detail.message,
+                        "submit_started_at": (
+                            detail.submit_started_at.isoformat()
+                            if detail.submit_started_at is not None
+                            else None
+                        ),
+                        "submit_accepted_at": (
+                            detail.submit_accepted_at.isoformat()
+                            if detail.submit_accepted_at is not None
+                            else None
+                        ),
+                        "terminal_state_at": (
+                            detail.terminal_state_at.isoformat()
+                            if detail.terminal_state_at is not None
+                            else None
+                        ),
+                        "order_terminal_latency_ms": detail.order_terminal_latency_ms,
                     },
                     ensure_ascii=False,
                 )
@@ -386,7 +434,7 @@ def run_m3_execution(
             return 0
         if report.summary.duration_ms > config.poll_interval_seconds * 1000:
             logger.warning(
-                "round_overrun round=%s duration_ms=%s interval_seconds=%s",
+                "round_overrun mode=m3 round=%s duration_ms=%s interval_seconds=%s",
                 round_no,
                 report.summary.duration_ms,
                 config.poll_interval_seconds,

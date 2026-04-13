@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from decimal import Decimal
+import json
 import logging
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -72,6 +73,7 @@ def _execution(
     filled_volume: int,
     *,
     symbol: str = "SHSE.600036",
+    event_time: datetime | None = None,
 ) -> OrderExecutionSnapshot:
     return OrderExecutionSnapshot(
         cl_ord_id="CL_1",
@@ -79,7 +81,7 @@ def _execution(
         symbol=symbol,
         filled_volume=filled_volume,
         avg_price=Decimal("10.80"),
-        event_time=_now(),
+        event_time=event_time or _now(),
     )
 
 
@@ -104,6 +106,7 @@ class SequencedTradeGateway:
         available_volume: int = 250,
         submit_result: OrderSubmitResult | None = None,
         order_statuses: list[tuple[str, int, int, str | None]] | None = None,
+        order_status_event_times: list[datetime] | None = None,
         execution_reports: list[tuple[OrderExecutionSnapshot, ...]] | None = None,
     ) -> None:
         self.positions = positions or (_position(available_volume=available_volume),)
@@ -117,6 +120,7 @@ class SequencedTradeGateway:
             event_time=_now(),
         )
         self.order_statuses = order_statuses or [("filled", 200, 0, "BK_1")]
+        self.order_status_event_times = order_status_event_times or [_now()]
         self.execution_reports = execution_reports or [(_execution(200),)]
         self.submit_calls = 0
         self.submitted_requests: list[object] = []
@@ -138,6 +142,9 @@ class SequencedTradeGateway:
         status, filled_volume, remaining_volume, broker_order_id = self.order_statuses[
             index
         ]
+        event_time = self.order_status_event_times[
+            min(index, len(self.order_status_event_times) - 1)
+        ]
         return OrderStatusSnapshot(
             cl_ord_id=cl_ord_id,
             broker_order_id=broker_order_id,
@@ -146,7 +153,7 @@ class SequencedTradeGateway:
             filled_volume=filled_volume,
             remaining_volume=remaining_volume,
             rejection_reason=None,
-            event_time=_now(),
+            event_time=event_time,
         )
 
     def query_execution_reports(self, cl_ord_id: str):
@@ -169,6 +176,16 @@ class CapturingLogger:
     def info(self, message: str, *args, **kwargs) -> None:
         del kwargs
         self.messages.append(message % args if args else message)
+
+
+class CapturingAuditLogger:
+    def __init__(self) -> None:
+        self.events: list[dict[str, object]] = []
+
+    def info(self, message: str, *args, **kwargs) -> None:
+        del kwargs
+        rendered = message % args if args else message
+        self.events.append(json.loads(rendered))
 
 
 def test_run_round_uses_real_m2_state_and_writes_decision_feedback() -> None:
@@ -394,3 +411,203 @@ def test_new_submit_clears_previous_order_filled_fields() -> None:
     assert second_round.execution_details[0].filled_volume == 0
     assert second_round.execution_details[0].avg_price is None
     assert second_round.execution_details[0].last_order_status == "pending_new"
+
+
+def test_run_round_emits_terminal_audit_event_with_latency() -> None:
+    submit_time = datetime(2026, 4, 13, 10, 0, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+    fill_time = datetime(2026, 4, 13, 10, 0, 1, tzinfo=ZoneInfo("Asia/Shanghai"))
+    audit_logger = CapturingAuditLogger()
+    trade_gateway = SequencedTradeGateway(
+        submit_result=OrderSubmitResult(
+            accepted=True,
+            cl_ord_id="CL_1",
+            broker_order_id="BK_1",
+            symbol="SHSE.600036",
+            message="accepted",
+            raw_status="1",
+            event_time=submit_time,
+        ),
+        order_statuses=[("filled", 200, 0, "BK_1")],
+        order_status_event_times=[fill_time],
+        execution_reports=[(_execution(200, event_time=fill_time),)],
+    )
+    service = M3ExecutionService(
+        trade_gateway=trade_gateway,
+        market_gateway=FakeMarketGateway(),
+        decision_state_manager=M2StateManager(logging.getLogger("test")),
+        execution_state_manager=M3PositionStateManager(logger=None),
+        decision_engine=M2DecisionEngine(),
+        logger=logging.getLogger("test"),
+        audit_logger=audit_logger,
+        clock=lambda: submit_time,
+        timer=FakeTimer([0.0, 0.1, 0.2]),
+        sleep=lambda seconds: None,
+    )
+
+    report = service.run_round(config=_config(ratio="1.0"), round_no=1, reconcile_timeout_seconds=5)
+
+    terminal_events = [
+        event
+        for event in audit_logger.events
+        if event["event_type"] == "terminal_state_reached"
+    ]
+    assert terminal_events[0]["order_terminal_latency_ms"] == 1000
+    assert terminal_events[0]["submit_accepted_at"] == submit_time.isoformat()
+    assert terminal_events[0]["terminal_state_at"] == fill_time.isoformat()
+    assert report.execution_details[-1].order_terminal_latency_ms == 1000
+
+
+def test_run_round_emits_reconcile_timeout_without_latency() -> None:
+    audit_logger = CapturingAuditLogger()
+    service = M3ExecutionService(
+        trade_gateway=SequencedTradeGateway(
+            available_volume=201,
+            order_statuses=[("pending_new", 0, 0, "BK_1")],
+            execution_reports=[()],
+        ),
+        market_gateway=FakeMarketGateway(),
+        decision_state_manager=M2StateManager(logging.getLogger("test")),
+        execution_state_manager=M3PositionStateManager(logger=None),
+        decision_engine=M2DecisionEngine(),
+        logger=logging.getLogger("test"),
+        audit_logger=audit_logger,
+        clock=_now,
+        timer=FakeTimer([0.0, 0.1, 5.2]),
+        sleep=lambda seconds: None,
+    )
+
+    report = service.run_round(config=_config(ratio="0.80"), round_no=1, reconcile_timeout_seconds=5)
+
+    timeout_events = [
+        event for event in audit_logger.events if event["event_type"] == "reconcile_timeout"
+    ]
+    assert timeout_events[0]["order_terminal_latency_ms"] is None
+    assert report.execution_details[-1].terminal_state_at is None
+
+
+def test_run_round_emits_submit_rejected_audit_event() -> None:
+    audit_logger = CapturingAuditLogger()
+    trade_gateway = SequencedTradeGateway(
+        submit_result=OrderSubmitResult(
+            accepted=False,
+            cl_ord_id=None,
+            broker_order_id=None,
+            symbol="SHSE.600036",
+            message="rejected",
+            raw_status="rejected",
+            event_time=_now(),
+        ),
+    )
+    service = M3ExecutionService(
+        trade_gateway=trade_gateway,
+        market_gateway=FakeMarketGateway(),
+        decision_state_manager=M2StateManager(logging.getLogger("test")),
+        execution_state_manager=M3PositionStateManager(logger=None),
+        decision_engine=M2DecisionEngine(),
+        logger=logging.getLogger("test"),
+        audit_logger=audit_logger,
+        clock=_now,
+        timer=FakeTimer([0.0, 0.1, 0.2]),
+        sleep=lambda seconds: None,
+    )
+
+    report = service.run_round(config=_config(ratio="1.0"), round_no=1, reconcile_timeout_seconds=5)
+
+    rejected_events = [
+        event for event in audit_logger.events if event["event_type"] == "submit_rejected"
+    ]
+    assert rejected_events[0]["message"] == "rejected"
+    assert report.execution_details[0].change_tags == ("submit_rejected",)
+
+
+def test_run_round_delays_terminal_audit_until_execution_report_arrives() -> None:
+    submit_time = datetime(2026, 4, 13, 10, 0, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+    fill_time = datetime(2026, 4, 13, 10, 0, 1, tzinfo=ZoneInfo("Asia/Shanghai"))
+    audit_logger = CapturingAuditLogger()
+    service = M3ExecutionService(
+        trade_gateway=SequencedTradeGateway(
+            submit_result=OrderSubmitResult(
+                accepted=True,
+                cl_ord_id="CL_1",
+                broker_order_id="BK_1",
+                symbol="SHSE.600036",
+                message="accepted",
+                raw_status="1",
+                event_time=submit_time,
+            ),
+            order_statuses=[
+                ("filled", 200, 0, "BK_1"),
+                ("filled", 200, 0, "BK_1"),
+            ],
+            order_status_event_times=[fill_time, fill_time],
+            execution_reports=[
+                (),
+                (_execution(200, event_time=fill_time),),
+            ],
+        ),
+        market_gateway=FakeMarketGateway(),
+        decision_state_manager=M2StateManager(logging.getLogger("test")),
+        execution_state_manager=M3PositionStateManager(logger=None),
+        decision_engine=M2DecisionEngine(),
+        logger=logging.getLogger("test"),
+        audit_logger=audit_logger,
+        clock=lambda: submit_time,
+        timer=FakeTimer([0.0, 0.1, 0.2, 0.7, 0.8]),
+        sleep=lambda seconds: None,
+    )
+
+    report = service.run_round(config=_config(ratio="1.0"), round_no=1, reconcile_timeout_seconds=5)
+
+    terminal_events = [
+        event
+        for event in audit_logger.events
+        if event["event_type"] == "terminal_state_reached"
+    ]
+    assert len(terminal_events) == 1
+    assert terminal_events[0]["avg_price"] == "10.80"
+    assert report.execution_details[-1].avg_price == Decimal("10.80")
+
+
+def test_run_round_uses_reconcile_timeout_when_terminal_audit_is_still_pending() -> None:
+    submit_time = datetime(2026, 4, 13, 10, 0, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
+    fill_time = datetime(2026, 4, 13, 10, 0, 1, tzinfo=ZoneInfo("Asia/Shanghai"))
+    audit_logger = CapturingAuditLogger()
+    service = M3ExecutionService(
+        trade_gateway=SequencedTradeGateway(
+            submit_result=OrderSubmitResult(
+                accepted=True,
+                cl_ord_id="CL_1",
+                broker_order_id="BK_1",
+                symbol="SHSE.600036",
+                message="accepted",
+                raw_status="1",
+                event_time=submit_time,
+            ),
+            order_statuses=[("filled", 200, 0, "BK_1")],
+            order_status_event_times=[fill_time],
+            execution_reports=[()],
+        ),
+        market_gateway=FakeMarketGateway(),
+        decision_state_manager=M2StateManager(logging.getLogger("test")),
+        execution_state_manager=M3PositionStateManager(logger=None),
+        decision_engine=M2DecisionEngine(),
+        logger=logging.getLogger("test"),
+        audit_logger=audit_logger,
+        clock=lambda: submit_time,
+        timer=FakeTimer([0.0, 0.1, 5.2]),
+        sleep=lambda seconds: None,
+    )
+
+    service.run_round(config=_config(ratio="1.0"), round_no=1, reconcile_timeout_seconds=5)
+
+    terminal_events = [
+        event
+        for event in audit_logger.events
+        if event["event_type"] == "terminal_state_reached"
+    ]
+    timeout_events = [
+        event for event in audit_logger.events if event["event_type"] == "reconcile_timeout"
+    ]
+    assert not terminal_events
+    assert timeout_events[0]["message"] == "terminal_audit_pending"
+    assert timeout_events[0]["avg_price"] is None

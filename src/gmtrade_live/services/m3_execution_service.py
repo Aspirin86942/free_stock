@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
+import json
 import logging
 from time import perf_counter
 import time
@@ -71,6 +72,7 @@ class M3ExecutionService:
         execution_state_manager: M3PositionStateManager,
         decision_engine,
         logger: logging.Logger,
+        audit_logger: logging.Logger | None = None,
         clock=None,
         timer=None,
         sleep=None,
@@ -81,9 +83,65 @@ class M3ExecutionService:
         self._execution_state_manager = execution_state_manager
         self._decision_engine = decision_engine
         self._logger = logger
+        self._audit_logger = audit_logger
         self._clock = clock or (lambda: datetime.now(tz=ZoneInfo("Asia/Shanghai")))
         self._timer = timer or perf_counter
         self._sleep = sleep or time.sleep
+
+    def _format_dt(self, value: datetime | None) -> str | None:
+        if value is None:
+            return None
+        return value.isoformat()
+
+    def _resolve_order_terminal_latency_ms(
+        self, *, submit_accepted_at: datetime | None, terminal_state_at: datetime | None
+    ) -> int | None:
+        # timeout / 未受理等场景没有终态或受理时间，无法计算耗时投影。
+        if submit_accepted_at is None or terminal_state_at is None:
+            return None
+        return int((terminal_state_at - submit_accepted_at).total_seconds() * 1000)
+
+    def _emit_order_audit_event(
+        self,
+        *,
+        event_type: str,
+        account_id: str,
+        round_no: int,
+        symbol: str,
+        decision: DecisionResult,
+        snapshot: M3ExecutionStateSnapshot,
+        message: str | None = None,
+    ) -> None:
+        if self._audit_logger is None:
+            return
+
+        order_terminal_latency_ms = self._resolve_order_terminal_latency_ms(
+            submit_accepted_at=snapshot.submit_accepted_at,
+            terminal_state_at=snapshot.terminal_state_at,
+        )
+        payload = {
+            "event_type": event_type,
+            "mode": "m3",
+            "round_no": round_no,
+            "account_id": account_id,
+            "symbol": symbol,
+            "cl_ord_id": snapshot.cl_ord_id,
+            "broker_order_id": snapshot.broker_order_id,
+            "decision_trigger_reason": decision.trigger_reason,
+            "decision_block_reason": decision.block_reason,
+            "execution_state": snapshot.state.value,
+            "last_order_status": snapshot.last_order_status,
+            "requested_volume": snapshot.requested_volume,
+            "filled_volume": snapshot.filled_volume,
+            "remaining_volume": snapshot.remaining_volume,
+            "avg_price": str(snapshot.avg_price) if snapshot.avg_price is not None else None,
+            "message": message if message is not None else snapshot.message,
+            "submit_started_at": self._format_dt(snapshot.submit_started_at),
+            "submit_accepted_at": self._format_dt(snapshot.submit_accepted_at),
+            "terminal_state_at": self._format_dt(snapshot.terminal_state_at),
+            "order_terminal_latency_ms": order_terminal_latency_ms,
+        }
+        self._audit_logger.info(json.dumps(payload, ensure_ascii=False))
 
     def run_round(
         self,
@@ -204,6 +262,8 @@ class M3ExecutionService:
                 now=now,
                 decision=decision,
                 decision_state=updated_state,
+                account_id=config.account_id,
+                round_no=round_no,
             )
             # 如果提交阶段立刻有结果
             if immediate_detail is not None:
@@ -225,6 +285,8 @@ class M3ExecutionService:
             pending_change_tags=pending_change_tags,
             deadline=deadline,
             now=now,
+            account_id=config.account_id,
+            round_no=round_no,
         )
         execution_details.extend(reconciled_details)
         changed_symbols.update(detail.symbol for detail in reconciled_details)
@@ -264,13 +326,21 @@ class M3ExecutionService:
         now: datetime,
         decision: DecisionResult,
         decision_state: DecisionPositionStateSnapshot,
+        account_id: str,
+        round_no: int,
     ) -> tuple[bool, M3ExecutionDetail | None]:
         """提交流程只做状态推进；受理成功后交给批次轮询继续收口。"""
+        # 为什么要重置时间字段：执行态是按 symbol 缓存的；新单提交前不清理上一单的时间点，
+        # 会导致后续审计/终态耗时投影串单（例如沿用旧的 submit_accepted_at / terminal_state_at）。
+        snapshot = self._execution_state_manager.get_state(symbol)
+        snapshot.submit_accepted_at = None
+        snapshot.terminal_state_at = None
         self._execution_state_manager.update_state(
             symbol,
             M3ExecutionState.submitting,
             cl_ord_id=None,
             broker_order_id=None,
+            trigger_reason=trigger_reason,
             requested_volume=requested_volume,
             filled_volume=0,
             remaining_volume=requested_volume,
@@ -278,6 +348,7 @@ class M3ExecutionService:
             last_order_status=None,
             rejection_reason=None,
             avg_price=None,
+            submit_started_at=now,
             message="submitting",
         )
         result = self._trade_gateway.submit_order(
@@ -305,6 +376,15 @@ class M3ExecutionService:
                 event_time=result.event_time,
                 message=result.message,
             )
+            self._emit_order_audit_event(
+                event_type="submit_rejected",
+                account_id=account_id,
+                round_no=round_no,
+                symbol=symbol,
+                decision=decision,
+                snapshot=self._execution_state_manager.get_state(symbol),
+                message=result.message,
+            )
             return (
                 False,
                 self._build_execution_detail(
@@ -325,11 +405,20 @@ class M3ExecutionService:
             filled_volume=0,
             remaining_volume=requested_volume,
             submit_accepted=True,
+            submit_accepted_at=result.event_time,
             last_order_status="submitted",
             rejection_reason=None,
             avg_price=None,
             event_time=result.event_time,
             message=result.message,
+        )
+        self._emit_order_audit_event(
+            event_type="submit_accepted",
+            account_id=account_id,
+            round_no=round_no,
+            symbol=symbol,
+            decision=decision,
+            snapshot=self._execution_state_manager.get_state(symbol),
         )
         return True, None
 
@@ -342,10 +431,13 @@ class M3ExecutionService:
         pending_change_tags: dict[str, tuple[str, ...]],
         deadline: float,
         now: datetime,
+        account_id: str,
+        round_no: int,
     ) -> list[M3ExecutionDetail]:
         """对新单和已有在途单做 round 级批次轮询。"""
         details: list[M3ExecutionDetail] = []
         tracked_positions = dict(positions_by_symbol)
+        timed_out = False
 
         while tracked_positions and self._timer() < deadline:
             next_tracked_positions: dict[str, PositionSnapshot] = {}
@@ -356,10 +448,13 @@ class M3ExecutionService:
                     decision_state=decision_state_by_symbol[symbol],
                     extra_change_tags=pending_change_tags.pop(symbol, ()),
                     now=now,
+                    account_id=account_id,
+                    round_no=round_no,
                 )
                 if detail is not None:
                     details.append(detail)
-                if self._execution_state_manager.has_open_order(symbol):
+                current_snapshot = self._execution_state_manager.get_state(symbol)
+                if self._execution_state_manager.has_open_order(symbol) or _should_wait_for_terminal_audit(current_snapshot):
                     next_tracked_positions[symbol] = position
 
             if not next_tracked_positions:
@@ -367,10 +462,31 @@ class M3ExecutionService:
 
             remaining_seconds = max(deadline - self._timer(), 0.0)
             if remaining_seconds <= 0:
-                return details
+                timed_out = True
+                tracked_positions = next_tracked_positions
+                break
 
             self._sleep(min(_RECONCILE_INTERVAL_SECONDS, remaining_seconds))
             tracked_positions = next_tracked_positions
+
+        if tracked_positions and (timed_out or self._timer() >= deadline):
+            # 为什么 timeout 不产出 latency：没有终态时间点就无法计算终态耗时，避免生成误导性数据。
+            for symbol in tracked_positions:
+                snapshot = self._execution_state_manager.get_state(symbol)
+                timeout_message = (
+                    "terminal_audit_pending"
+                    if _should_wait_for_terminal_audit(snapshot)
+                    else "reconcile_timeout"
+                )
+                self._emit_order_audit_event(
+                    event_type="reconcile_timeout",
+                    account_id=account_id,
+                    round_no=round_no,
+                    symbol=symbol,
+                    decision=decision_by_symbol[symbol],
+                    snapshot=snapshot,
+                    message=timeout_message,
+                )
 
         for symbol, change_tags in pending_change_tags.items():
             if not change_tags or symbol not in decision_by_symbol:
@@ -394,6 +510,8 @@ class M3ExecutionService:
         decision_state: DecisionPositionStateSnapshot,
         extra_change_tags: tuple[str, ...],
         now: datetime,
+        account_id: str,
+        round_no: int,
     ) -> M3ExecutionDetail | None:
         """把外部查询结果转换成内部事件，再驱动本地执行态更新。"""
         snapshot = self._execution_state_manager.get_state(position.symbol)
@@ -409,6 +527,9 @@ class M3ExecutionService:
             )
 
         change_tags: list[str] = list(extra_change_tags)
+        old_terminal_state_at = snapshot.terminal_state_at
+        old_avg_price = snapshot.avg_price
+        old_wait_for_terminal_audit = _should_wait_for_terminal_audit(snapshot)
         for event in self._build_query_events(
             cl_ord_id=snapshot.cl_ord_id,
             symbol=position.symbol,
@@ -419,6 +540,31 @@ class M3ExecutionService:
                 change_tags.append("order_status_updated")
             else:
                 change_tags.append("execution_reports_updated")
+
+        # 只在第一次观察到终态时间时产出审计事件，避免重复轮询导致重复写入。
+        updated_snapshot = self._execution_state_manager.get_state(position.symbol)
+        terminal_became_auditable = (
+            old_wait_for_terminal_audit
+            and not _should_wait_for_terminal_audit(updated_snapshot)
+            and old_avg_price is None
+            and updated_snapshot.avg_price is not None
+        )
+        should_emit_terminal = (
+            updated_snapshot.terminal_state_at is not None
+            and (
+                (old_terminal_state_at is None and not _should_wait_for_terminal_audit(updated_snapshot))
+                or terminal_became_auditable
+            )
+        )
+        if should_emit_terminal:
+            self._emit_order_audit_event(
+                event_type="terminal_state_reached",
+                account_id=account_id,
+                round_no=round_no,
+                symbol=position.symbol,
+                decision=decision,
+                snapshot=updated_snapshot,
+            )
 
         if not change_tags:
             return None
@@ -583,6 +729,10 @@ class M3ExecutionService:
     ) -> M3ExecutionDetail:
         """把当前执行态快照整理为对外双状态详情。"""
         snapshot = self._execution_state_manager.get_state(symbol)
+        order_terminal_latency_ms = self._resolve_order_terminal_latency_ms(
+            submit_accepted_at=snapshot.submit_accepted_at,
+            terminal_state_at=snapshot.terminal_state_at,
+        )
         return M3ExecutionDetail(
             symbol=symbol,
             change_tags=change_tags,
@@ -603,6 +753,10 @@ class M3ExecutionService:
             avg_price=snapshot.avg_price,
             event_time=snapshot.event_time or now,
             message=snapshot.message,
+            submit_started_at=snapshot.submit_started_at,
+            submit_accepted_at=snapshot.submit_accepted_at,
+            terminal_state_at=snapshot.terminal_state_at,
+            order_terminal_latency_ms=order_terminal_latency_ms,
         )
 
 
@@ -669,3 +823,12 @@ def _resolve_filled_volume(
         return max(resolved, inferred)
 
     return resolved
+
+
+def _should_wait_for_terminal_audit(snapshot: M3ExecutionStateSnapshot) -> bool:
+    """filled 已确认但成交回报尚未补齐时，继续等待一次，避免终态审计写出半成品。"""
+    return (
+        snapshot.state is M3ExecutionState.filled
+        and snapshot.filled_volume > 0
+        and snapshot.avg_price is None
+    )

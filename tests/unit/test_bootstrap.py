@@ -315,8 +315,63 @@ def test_run_m2_dry_run_logs_and_continues_after_round_exception(monkeypatch, ca
     assert exit_code == 0
     assert '"kind": "m2_round_error"' in lines[0]
     assert '"kind": "m2_round_summary"' in lines[1]
-    assert any("m2_round_failed" in call for call in logger_calls)
+    assert any("round_failed mode=m2 round=1" in call for call in logger_calls)
     assert sleep_calls == [5]
+
+
+def test_run_m2_dry_run_logs_round_started_and_completed(monkeypatch, capsys) -> None:
+    config = _fake_config()
+    logger_calls: list[str] = []
+    summary = SimpleNamespace(
+        round_no=1,
+        session_state="trading",
+        position_count=1,
+        watching_count=1,
+        tombstone_count=0,
+        should_sell_count=1,
+        can_submit_sell_count=1,
+        changed_symbol_count=1,
+        duration_ms=8,
+    )
+    report = SimpleNamespace(summary=summary, change_events=())
+
+    class FakeGateway:
+        def connect(self, *args, **kwargs) -> None:
+            return None
+
+    class FakeService:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+        def run_round(self, **kwargs):
+            return report
+
+    monkeypatch.setattr(bootstrap, "load_config", lambda path: config)
+    monkeypatch.setattr(
+        bootstrap,
+        "setup_logging",
+        lambda *args, **kwargs: SimpleNamespace(
+            info=lambda message, *a, **k: logger_calls.append(message % a if a else message),
+            warning=lambda *a, **k: None,
+            error=lambda *a, **k: None,
+        ),
+    )
+    monkeypatch.setattr(bootstrap, "GMTradeGateway", lambda: FakeGateway())
+    monkeypatch.setattr(bootstrap, "GMCurrentQuoteGateway", lambda: FakeGateway())
+    monkeypatch.setattr(bootstrap, "M2StateManager", lambda logger: SimpleNamespace())
+    monkeypatch.setattr(bootstrap, "M2DecisionEngine", lambda: SimpleNamespace())
+    monkeypatch.setattr(bootstrap, "M2DryRunService", FakeService)
+
+    exit_code = bootstrap.run_m2_dry_run(
+        config_path=Path("config/sim_account.yaml"),
+        once=True,
+        max_rounds=None,
+    )
+
+    capsys.readouterr()
+    assert exit_code == 0
+    assert any("round_started mode=m2 round=1" in call for call in logger_calls)
+    assert any("round_completed mode=m2 round=1 duration_ms=8" in call for call in logger_calls)
 
 
 def test_run_m1_manual_trade_rejects_unimplemented_market_session_mode(monkeypatch) -> None:
@@ -414,6 +469,25 @@ def test_run_m3_execution_prints_summary_block_and_execution_details(
                     tzinfo=ZoneInfo("Asia/Shanghai"),
                 ),
                 message="accepted",
+                submit_started_at=datetime(
+                    2026,
+                    4,
+                    10,
+                    9,
+                    59,
+                    59,
+                    tzinfo=ZoneInfo("Asia/Shanghai"),
+                ),
+                submit_accepted_at=datetime(
+                    2026,
+                    4,
+                    10,
+                    10,
+                    0,
+                    tzinfo=ZoneInfo("Asia/Shanghai"),
+                ),
+                terminal_state_at=None,
+                order_terminal_latency_ms=None,
             ),
         ),
     )
@@ -439,6 +513,11 @@ def test_run_m3_execution_prints_summary_block_and_execution_details(
             error=lambda *a, **k: None,
         ),
     )
+    monkeypatch.setattr(
+        bootstrap,
+        "setup_order_audit_logger",
+        lambda *args, **kwargs: SimpleNamespace(info=lambda *a, **k: None),
+    )
     monkeypatch.setattr(bootstrap, "GMTradeGateway", lambda: FakeGateway())
     monkeypatch.setattr(bootstrap, "GMCurrentQuoteGateway", lambda: FakeGateway())
     monkeypatch.setattr(bootstrap, "M3PositionStateManager", lambda logger: SimpleNamespace())
@@ -459,6 +538,8 @@ def test_run_m3_execution_prints_summary_block_and_execution_details(
     assert '"decision_lifecycle_state": "watching"' in lines[1]
     assert '"kind": "m3_execution_detail"' in lines[2]
     assert '"decision_trigger_reason": "take_profit_triggered"' in lines[2]
+    assert '"submit_accepted_at": "2026-04-10T10:00:00+08:00"' in lines[2]
+    assert '"order_terminal_latency_ms": null' in lines[2]
 
 
 def test_run_m3_execution_returns_nonzero_when_round_raises(
@@ -488,6 +569,11 @@ def test_run_m3_execution_returns_nonzero_when_round_raises(
             error=lambda *a, **k: None,
         ),
     )
+    monkeypatch.setattr(
+        bootstrap,
+        "setup_order_audit_logger",
+        lambda *args, **kwargs: SimpleNamespace(info=lambda *a, **k: None),
+    )
     monkeypatch.setattr(bootstrap, "GMTradeGateway", lambda: FakeGateway())
     monkeypatch.setattr(bootstrap, "GMCurrentQuoteGateway", lambda: FakeGateway())
     monkeypatch.setattr(bootstrap, "M3PositionStateManager", lambda logger: SimpleNamespace())
@@ -505,3 +591,95 @@ def test_run_m3_execution_returns_nonzero_when_round_raises(
     assert exit_code == 1
     assert payload["kind"] == "m3_round_error"
     assert payload["message"] == "boom"
+
+
+def test_run_m3_execution_prints_latency_fields(monkeypatch, capsys) -> None:
+    config = _fake_config()
+    audit_loggers: list[object] = []
+    report = SimpleNamespace(
+        summary=SimpleNamespace(
+            round_no=1,
+            session_state="trading",
+            position_count=1,
+            candidate_count=1,
+            blocked_count=0,
+            submitted_count=1,
+            open_order_count=0,
+            changed_symbol_count=1,
+            duration_ms=12,
+        ),
+        block_details=(),
+        execution_details=(
+            SimpleNamespace(
+                symbol="SHSE.600036",
+                change_tags=("terminal_state_reached",),
+                decision_lifecycle_state="watching",
+                decision_should_sell=True,
+                decision_can_submit_sell=True,
+                decision_trigger_reason="take_profit_triggered",
+                decision_block_reason=None,
+                execution_state="filled",
+                cl_ord_id="CL_1",
+                broker_order_id="BK_1",
+                requested_volume=200,
+                filled_volume=200,
+                remaining_volume=0,
+                submit_accepted=True,
+                last_order_status="filled",
+                rejection_reason=None,
+                avg_price=Decimal("10.80"),
+                event_time=datetime(2026, 4, 13, 10, 0, 1, tzinfo=ZoneInfo("Asia/Shanghai")),
+                message="filled",
+                submit_started_at=datetime(2026, 4, 13, 10, 0, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+                submit_accepted_at=datetime(2026, 4, 13, 10, 0, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+                terminal_state_at=datetime(2026, 4, 13, 10, 0, 1, tzinfo=ZoneInfo("Asia/Shanghai")),
+                order_terminal_latency_ms=1000,
+            ),
+        ),
+    )
+
+    class FakeGateway:
+        def connect(self, *args, **kwargs) -> None:
+            return None
+
+    class FakeService:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+            audit_loggers.append(kwargs["audit_logger"])
+
+        def run_round(self, **kwargs):
+            return report
+
+    monkeypatch.setattr(bootstrap, "load_config", lambda path: config)
+    monkeypatch.setattr(
+        bootstrap,
+        "setup_logging",
+        lambda *a, **k: SimpleNamespace(
+            info=lambda *a, **k: None,
+            warning=lambda *a, **k: None,
+            error=lambda *a, **k: None,
+        ),
+    )
+    monkeypatch.setattr(
+        bootstrap,
+        "setup_order_audit_logger",
+        lambda *a, **k: SimpleNamespace(info=lambda *a, **k: None),
+    )
+    monkeypatch.setattr(bootstrap, "GMTradeGateway", lambda: FakeGateway())
+    monkeypatch.setattr(bootstrap, "GMCurrentQuoteGateway", lambda: FakeGateway())
+    monkeypatch.setattr(bootstrap, "M3PositionStateManager", lambda logger: SimpleNamespace())
+    monkeypatch.setattr(bootstrap, "M2DecisionEngine", lambda: SimpleNamespace())
+    monkeypatch.setattr(bootstrap, "M3ExecutionService", FakeService)
+
+    exit_code = bootstrap.run_m3_execution(
+        config_path=Path("config/sim_account.yaml"),
+        once=True,
+        max_rounds=None,
+        reconcile_timeout_seconds=5,
+    )
+
+    lines = [line for line in capsys.readouterr().out.splitlines() if line]
+    assert exit_code == 0
+    assert audit_loggers
+    assert '"order_terminal_latency_ms": 1000' in lines[1]
+    assert '"submit_accepted_at": "2026-04-13T10:00:00+08:00"' in lines[1]
