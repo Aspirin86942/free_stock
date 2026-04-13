@@ -107,24 +107,30 @@ class M3ExecutionService:
             if position.volume > 0
         )
         self._decision_state_manager.sync_positions(positions=positions, now=now)
-        quote_map = self._load_quote_map(symbols=[position.symbol for position in positions])
+        quote_map = self._load_quote_map(
+            symbols=[position.symbol for position in positions]
+        )
 
+        # 评估-提交-轮询收口流程中产生的详情和变更统计
         block_details: list[M3BlockDetail] = []
         execution_details: list[M3ExecutionDetail] = []
         changed_symbols: set[str] = set()
         candidate_count = 0
         submitted_count = 0
 
+        # 评估-提交-轮询收口流程中产生的状态变更
         tracked_positions: dict[str, PositionSnapshot] = {}
         pending_change_tags: dict[str, tuple[str, ...]] = {}
         decision_by_symbol: dict[str, DecisionResult] = {}
         decision_state_by_symbol: dict[str, DecisionPositionStateSnapshot] = {}
 
+        # 评估-提交-轮询收口流程：对每个持仓评估是否满足卖出条件，满足则提交卖单，
+        # 并在本轮内持续跟踪后续状态直到收口
         for position in positions:
             decision_state = self._decision_state_manager.get_state(position.symbol)
             if decision_state is None:
                 continue
-
+            # 评估当前持仓是否满足卖出条件
             decision = self._decision_engine.evaluate(
                 position=position,
                 quote=quote_map.get(position.symbol),
@@ -133,6 +139,7 @@ class M3ExecutionService:
                 config=config,
                 now=now,
             )
+            # 把评估结果反馈给决策状态管理器，推进决策状态机，并获取更新后的状态快照
             updated_state = self._decision_state_manager.update_decision_feedback(
                 position.symbol,
                 trigger_reason=decision.trigger_reason,
@@ -142,17 +149,21 @@ class M3ExecutionService:
                 sellable_now=decision.sellable_now,
                 decision_time=decision.evaluated_at,
             )
+            # 缓存 decision / updated_state 供后续使用
             decision_by_symbol[position.symbol] = decision
             decision_state_by_symbol[position.symbol] = updated_state
 
+            # 如果不允许提交卖单
             if not decision.can_submit_sell:
                 continue
 
             candidate_count += 1
+            # 如果这个标的已经有在途单
             if self._execution_state_manager.has_open_order(position.symbol):
                 tracked_positions[position.symbol] = position
                 continue
 
+            # 计算目标数量
             quantity_plan = build_sell_quantity_plan(
                 symbol=position.symbol,
                 total_volume=position.volume,
@@ -166,7 +177,7 @@ class M3ExecutionService:
                 quantity_plan.final_target_volume,
                 quantity_plan.block_reason,
             )
-
+            # 如果卖量规划被阻断,生成 block_detail
             if quantity_plan.block_reason is not None:
                 block_details.append(
                     self._build_block_detail(
@@ -185,7 +196,7 @@ class M3ExecutionService:
                 )
                 changed_symbols.add(position.symbol)
                 continue
-
+            # 尝试提交新单
             accepted, immediate_detail = self._submit_new_order(
                 symbol=position.symbol,
                 requested_volume=quantity_plan.final_target_volume,
@@ -194,17 +205,18 @@ class M3ExecutionService:
                 decision=decision,
                 decision_state=updated_state,
             )
+            # 如果提交阶段立刻有结果
             if immediate_detail is not None:
                 execution_details.append(immediate_detail)
                 changed_symbols.add(position.symbol)
                 continue
-
+            # 如果提交成功
             if accepted:
                 submitted_count += 1
                 tracked_positions[position.symbol] = position
                 pending_change_tags[position.symbol] = ("submit_accepted",)
                 changed_symbols.add(position.symbol)
-
+        # 统一对 tracked_positions 里的标的做轮询收口
         deadline = started_at + float(reconcile_timeout_seconds)
         reconciled_details = self._reconcile_open_orders(
             positions_by_symbol=tracked_positions,
@@ -511,7 +523,9 @@ class M3ExecutionService:
             snapshot.state,
             broker_order_id=event.broker_order_id or snapshot.broker_order_id,
             filled_volume=max(snapshot.filled_volume, event.filled_volume),
-            avg_price=event.avg_price if event.avg_price is not None else snapshot.avg_price,
+            avg_price=(
+                event.avg_price if event.avg_price is not None else snapshot.avg_price
+            ),
             event_time=event.event_time,
         )
 
@@ -616,7 +630,14 @@ def _resolve_remaining_volume(
     if event.remaining_volume > 0:
         return event.remaining_volume
 
-    if event.status in {"filled", "cancelled", "expired", "done_for_day", "stopped", "rejected"}:
+    if event.status in {
+        "filled",
+        "cancelled",
+        "expired",
+        "done_for_day",
+        "stopped",
+        "rejected",
+    }:
         return 0
 
     if snapshot.remaining_volume > 0 and event.filled_volume <= snapshot.filled_volume:
