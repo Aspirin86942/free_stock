@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib.util
+import sys
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -16,6 +18,18 @@ from gmtrade_live.models import (
 from gmtrade_live.session import TradingSessionState
 from tools.debug.check_connectivity import run_connectivity_check
 from tools.debug.check_connectivity import build_connectivity_summary
+from tools.debug import check_connectivity
+
+
+def test_ensure_local_src_on_path_adds_repo_src_when_package_unavailable(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: None if name == "gmtrade_live" else object())
+    monkeypatch.setattr(sys, "path", ["C:\\dummy"])
+
+    check_connectivity._ensure_local_src_on_path()
+
+    assert sys.path[0] == str(Path(check_connectivity.__file__).resolve().parents[2] / "src")
 
 
 def test_build_connectivity_summary_returns_payload() -> None:

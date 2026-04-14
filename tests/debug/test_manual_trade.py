@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib.util
+import sys
 from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -16,6 +18,17 @@ from gmtrade_live.models import (
 )
 from tools.debug import manual_trade
 from tools.debug.manual_trade import ManualTradeService, build_manual_trade_payload
+
+
+def test_ensure_local_src_on_path_adds_repo_src_when_package_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: None if name == "gmtrade_live" else object())
+    monkeypatch.setattr(sys, "path", ["C:\\dummy"])
+
+    manual_trade._ensure_local_src_on_path()
+
+    assert sys.path[0] == str(Path(manual_trade.__file__).resolve().parents[2] / "src")
 
 
 class FakeTradeGateway:

@@ -3,13 +3,29 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
+import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from zoneinfo import ZoneInfo
+
+
+def _ensure_local_src_on_path() -> None:
+    """当环境里的 editable 安装失效时，允许直接从仓库根目录运行调试脚本。"""
+    if importlib.util.find_spec("gmtrade_live") is not None:
+        return
+
+    repo_root = Path(__file__).resolve().parents[2]
+    src_path = repo_root / "src"
+    if src_path.exists():
+        sys.path.insert(0, str(src_path))
+
+
+_ensure_local_src_on_path()
 
 from gmtrade_live.config import AppConfig, load_config
 from gmtrade_live.errors import ServiceError

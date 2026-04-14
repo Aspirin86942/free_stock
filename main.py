@@ -3,8 +3,21 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
+import sys
 from pathlib import Path
 from typing import Sequence
+
+
+def _ensure_local_src_on_path() -> None:
+    """当环境里的 editable 安装失效时，允许直接从仓库根目录运行入口脚本。"""
+    if importlib.util.find_spec("gmtrade_live") is not None:
+        return
+
+    repo_root = Path(__file__).resolve().parent
+    src_path = repo_root / "src"
+    if src_path.exists():
+        sys.path.insert(0, str(src_path))
 
 
 def _parse_positive_int(value: str) -> int:
@@ -44,6 +57,7 @@ def parse_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 def main() -> int:
     """执行自动卖出入口。"""
     args = parse_cli_args()
+    _ensure_local_src_on_path()
     from gmtrade_live.app_runner import run_auto_sell
 
     config_path = Path(args.config)

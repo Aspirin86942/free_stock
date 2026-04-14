@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -7,6 +8,17 @@ from types import SimpleNamespace
 import pytest
 
 import main
+
+
+def test_ensure_local_src_on_path_adds_repo_src_when_package_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name: None if name == "gmtrade_live" else object())
+    monkeypatch.setattr(sys, "path", ["C:\\dummy"])
+
+    main._ensure_local_src_on_path()
+
+    assert sys.path[0] == str(Path(main.__file__).resolve().parent / "src")
 
 
 def test_build_parser_accepts_config_argument() -> None:
