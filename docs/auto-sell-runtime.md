@@ -39,5 +39,5 @@ conda run -n stock_analysis python tools/debug/check_connectivity.py --config co
 调试手工交易：
 
 ```bash
-conda run -n stock_analysis python tools/debug/manual_trade.py --config config/sim_account.yaml
+conda run -n stock_analysis python tools/debug/manual_trade.py --config config/sim_account.yaml --side sell --symbol SHSE.600839 --volume 100 --price-type market --timeout-seconds 60
 ```
