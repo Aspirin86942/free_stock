@@ -313,9 +313,9 @@ def test_run_decision_observer_logs_and_continues_after_round_exception(
 
     lines = [line for line in capsys.readouterr().out.splitlines() if line]
     assert exit_code == 0
-    assert '"kind": "m2_round_error"' in lines[0]
+    assert '"kind": "decision_round_error"' in lines[0]
     assert '"kind": "m2_round_summary"' in lines[1]
-    assert any("round_failed mode=m2 round=1" in call for call in logger_calls)
+    assert any("round_failed entry=decision_observer round=1" in call for call in logger_calls)
     assert sleep_calls == [5]
 
 
@@ -371,8 +371,8 @@ def test_run_decision_observer_logs_round_started_and_completed(
 
     capsys.readouterr()
     assert exit_code == 0
-    assert any("round_started mode=m2 round=1" in call for call in logger_calls)
-    assert any("round_completed mode=m2 round=1 duration_ms=8" in call for call in logger_calls)
+    assert any("round_started entry=decision_observer round=1" in call for call in logger_calls)
+    assert any("round_completed entry=decision_observer round=1 duration_ms=8" in call for call in logger_calls)
 
 
 def test_run_m1_manual_trade_rejects_unimplemented_market_session_mode(monkeypatch) -> None:
@@ -592,7 +592,7 @@ def test_run_auto_sell_returns_nonzero_when_round_raises(
 
     payload = json.loads(capsys.readouterr().out)
     assert exit_code == 1
-    assert payload["kind"] == "m3_round_error"
+    assert payload["kind"] == "auto_sell_round_error"
     assert payload["message"] == "boom"
 
 

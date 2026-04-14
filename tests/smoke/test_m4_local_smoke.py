@@ -296,8 +296,8 @@ def test_local_m2_smoke_emits_summary_and_runtime_log(
 
     assert exit_code == 0
     assert "m2_round_summary" in captured.out
-    assert "round_started mode=m2" in runtime_log
-    assert "round_completed mode=m2" in runtime_log
+    assert "round_started entry=decision_observer" in runtime_log
+    assert "round_completed entry=decision_observer" in runtime_log
 
 
 @pytest.mark.usefixtures("tmp_path")
@@ -361,5 +361,5 @@ def test_local_m3_smoke_emits_audit_log_and_latency(
     assert submit_events, "期待 order_audit.log 包含 submit_accepted 事件"
     assert terminal_events, "期待 order_audit.log 包含 terminal_state_reached 事件"
     assert terminal_events[0]["order_terminal_latency_ms"] == 1000
-    assert "round_started mode=m3" in runtime_log
-    assert "round_completed mode=m3" in runtime_log
+    assert "round_started entry=auto_sell" in runtime_log
+    assert "round_completed entry=auto_sell" in runtime_log

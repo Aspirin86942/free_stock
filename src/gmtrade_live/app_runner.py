@@ -216,7 +216,7 @@ def run_decision_observer(
     round_no = 1
     while True:
         logger.info(
-            "round_started mode=m2 round=%s once=%s max_rounds=%s",
+            "round_started entry=decision_observer round=%s once=%s max_rounds=%s",
             round_no,
             once,
             max_rounds,
@@ -225,7 +225,7 @@ def run_decision_observer(
             report = service.run_round(config=config, round_no=round_no)
         except Exception as exc:
             logger.error(
-                "round_failed mode=m2 round=%s error_type=%s retryable=%s error=%s",
+                "round_failed entry=decision_observer round=%s error_type=%s retryable=%s error=%s",
                 round_no,
                 type(exc).__name__,
                 getattr(exc, "retryable", None),
@@ -235,7 +235,7 @@ def run_decision_observer(
             print(
                 json.dumps(
                     {
-                        "kind": "m2_round_error",
+                        "kind": "decision_round_error",
                         "round": round_no,
                         "error_type": type(exc).__name__,
                         "message": str(exc),
@@ -247,7 +247,7 @@ def run_decision_observer(
                 return 1
         else:
             logger.info(
-                "round_completed mode=m2 round=%s duration_ms=%s session_state=%s position_count=%s changed_symbol_count=%s",
+                "round_completed entry=decision_observer round=%s duration_ms=%s session_state=%s position_count=%s changed_symbol_count=%s",
                 round_no,
                 report.summary.duration_ms,
                 report.summary.session_state,
@@ -318,7 +318,7 @@ def run_decision_observer(
                 return 0
             if report.summary.duration_ms > config.poll_interval_seconds * 1000:
                 logger.warning(
-                    "round_overrun mode=m2 round=%s duration_ms=%s interval_seconds=%s",
+                    "round_overrun entry=decision_observer round=%s duration_ms=%s interval_seconds=%s",
                     round_no,
                     report.summary.duration_ms,
                     config.poll_interval_seconds,
@@ -364,7 +364,7 @@ def run_auto_sell(
     round_no = 1
     while True:
         logger.info(
-            "round_started mode=m3 round=%s once=%s max_rounds=%s reconcile_timeout_seconds=%s",
+            "round_started entry=auto_sell round=%s once=%s max_rounds=%s reconcile_timeout_seconds=%s",
             round_no,
             once,
             max_rounds,
@@ -379,7 +379,7 @@ def run_auto_sell(
         except Exception as exc:
             # M3 是真实执行链路，单轮异常直接中止，避免在不确定状态下继续发单。
             logger.error(
-                "round_failed mode=m3 round=%s error_type=%s retryable=%s error=%s",
+                "round_failed entry=auto_sell round=%s error_type=%s retryable=%s error=%s",
                 round_no,
                 type(exc).__name__,
                 getattr(exc, "retryable", None),
@@ -389,7 +389,7 @@ def run_auto_sell(
             print(
                 json.dumps(
                     {
-                        "kind": "m3_round_error",
+                        "kind": "auto_sell_round_error",
                         "round": round_no,
                         "error_type": type(exc).__name__,
                         "message": str(exc),
@@ -400,7 +400,7 @@ def run_auto_sell(
             return 1
 
         logger.info(
-            "round_completed mode=m3 round=%s duration_ms=%s submitted_count=%s open_order_count=%s",
+            "round_completed entry=auto_sell round=%s duration_ms=%s submitted_count=%s open_order_count=%s",
             round_no,
             report.summary.duration_ms,
             report.summary.submitted_count,
@@ -503,7 +503,7 @@ def run_auto_sell(
             return 0
         if report.summary.duration_ms > config.poll_interval_seconds * 1000:
             logger.warning(
-                "round_overrun mode=m3 round=%s duration_ms=%s interval_seconds=%s",
+                "round_overrun entry=auto_sell round=%s duration_ms=%s interval_seconds=%s",
                 round_no,
                 report.summary.duration_ms,
                 config.poll_interval_seconds,
