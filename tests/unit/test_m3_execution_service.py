@@ -15,13 +15,13 @@ from gmtrade_live.models import (
     PositionSnapshot,
     QuoteSnapshot,
 )
-from gmtrade_live.services.m2_decision_engine import M2DecisionEngine
-from gmtrade_live.services.m2_state_manager import M2StateManager
 from gmtrade_live.services.m3_execution_service import M3ExecutionService
 from gmtrade_live.services.m3_state_manager import (
     M3ExecutionState,
     M3PositionStateManager,
 )
+from gmtrade_live.services.position_decision_state import PositionDecisionStateStore
+from gmtrade_live.services.sell_decision_engine import SellDecisionEngine
 
 
 def _now() -> datetime:
@@ -189,14 +189,14 @@ class CapturingAuditLogger:
 
 
 def test_run_round_uses_real_m2_state_and_writes_decision_feedback() -> None:
-    decision_manager = M2StateManager(logging.getLogger("test"))
+    decision_manager = PositionDecisionStateStore(logging.getLogger("test"))
     execution_manager = M3PositionStateManager(logger=None)
     service = M3ExecutionService(
         trade_gateway=SequencedTradeGateway(),
         market_gateway=FakeMarketGateway(),
         decision_state_manager=decision_manager,
         execution_state_manager=execution_manager,
-        decision_engine=M2DecisionEngine(),
+        decision_engine=SellDecisionEngine(),
         logger=logging.getLogger("test"),
         clock=_now,
         timer=FakeTimer([0.0, 0.1, 0.2]),
@@ -231,9 +231,9 @@ def test_run_round_reconciles_new_submit_until_filled_within_shared_budget() -> 
             ],
         ),
         market_gateway=FakeMarketGateway(),
-        decision_state_manager=M2StateManager(logging.getLogger("test")),
+        decision_state_manager=PositionDecisionStateStore(logging.getLogger("test")),
         execution_state_manager=M3PositionStateManager(logger=None),
-        decision_engine=M2DecisionEngine(),
+        decision_engine=SellDecisionEngine(),
         logger=logging.getLogger("test"),
         clock=_now,
         timer=FakeTimer([0.0, 0.1, 0.2, 0.7, 0.8, 1.3, 1.4]),
@@ -269,9 +269,9 @@ def test_run_round_tracks_existing_open_order_without_duplicate_submit() -> None
     service = M3ExecutionService(
         trade_gateway=trade_gateway,
         market_gateway=FakeMarketGateway(),
-        decision_state_manager=M2StateManager(logging.getLogger("test")),
+        decision_state_manager=PositionDecisionStateStore(logging.getLogger("test")),
         execution_state_manager=execution_manager,
-        decision_engine=M2DecisionEngine(),
+        decision_engine=SellDecisionEngine(),
         logger=logging.getLogger("test"),
         clock=_now,
         timer=FakeTimer([0.0, 0.1, 5.2]),
@@ -291,9 +291,9 @@ def test_run_round_emits_block_detail_with_decision_projection() -> None:
     service = M3ExecutionService(
         trade_gateway=trade_gateway,
         market_gateway=FakeMarketGateway(),
-        decision_state_manager=M2StateManager(logging.getLogger("test")),
+        decision_state_manager=PositionDecisionStateStore(logging.getLogger("test")),
         execution_state_manager=M3PositionStateManager(logger=None),
-        decision_engine=M2DecisionEngine(),
+        decision_engine=SellDecisionEngine(),
         logger=logging.getLogger("test"),
         clock=_now,
         timer=FakeTimer([0.0, 0.1]),
@@ -318,9 +318,9 @@ def test_run_round_preserves_submit_broker_order_id_and_remaining_volume_on_bad_
             execution_reports=[()],
         ),
         market_gateway=FakeMarketGateway(),
-        decision_state_manager=M2StateManager(logging.getLogger("test")),
+        decision_state_manager=PositionDecisionStateStore(logging.getLogger("test")),
         execution_state_manager=M3PositionStateManager(logger=None),
-        decision_engine=M2DecisionEngine(),
+        decision_engine=SellDecisionEngine(),
         logger=logging.getLogger("test"),
         clock=_now,
         timer=FakeTimer([0.0, 0.1, 5.1]),
@@ -343,9 +343,9 @@ def test_run_round_does_not_log_filled_state_with_zero_filled_volume() -> None:
             execution_reports=[(_execution(100),)],
         ),
         market_gateway=FakeMarketGateway(),
-        decision_state_manager=M2StateManager(logging.getLogger("test")),
+        decision_state_manager=PositionDecisionStateStore(logging.getLogger("test")),
         execution_state_manager=M3PositionStateManager(logger=state_logger),
-        decision_engine=M2DecisionEngine(),
+        decision_engine=SellDecisionEngine(),
         logger=logging.getLogger("test"),
         clock=_now,
         timer=FakeTimer([0.0, 0.1, 0.2]),
@@ -394,9 +394,9 @@ def test_new_submit_clears_previous_order_filled_fields() -> None:
     service = M3ExecutionService(
         trade_gateway=gateway,
         market_gateway=FakeMarketGateway(),
-        decision_state_manager=M2StateManager(logging.getLogger("test")),
+        decision_state_manager=PositionDecisionStateStore(logging.getLogger("test")),
         execution_state_manager=M3PositionStateManager(logger=None),
-        decision_engine=M2DecisionEngine(),
+        decision_engine=SellDecisionEngine(),
         logger=logging.getLogger("test"),
         clock=_now,
         timer=FakeTimer([0.0, 0.1, 0.2, 1.0, 1.1, 6.2]),
@@ -434,9 +434,9 @@ def test_run_round_emits_terminal_audit_event_with_latency() -> None:
     service = M3ExecutionService(
         trade_gateway=trade_gateway,
         market_gateway=FakeMarketGateway(),
-        decision_state_manager=M2StateManager(logging.getLogger("test")),
+        decision_state_manager=PositionDecisionStateStore(logging.getLogger("test")),
         execution_state_manager=M3PositionStateManager(logger=None),
-        decision_engine=M2DecisionEngine(),
+        decision_engine=SellDecisionEngine(),
         logger=logging.getLogger("test"),
         audit_logger=audit_logger,
         clock=lambda: submit_time,
@@ -466,9 +466,9 @@ def test_run_round_emits_reconcile_timeout_without_latency() -> None:
             execution_reports=[()],
         ),
         market_gateway=FakeMarketGateway(),
-        decision_state_manager=M2StateManager(logging.getLogger("test")),
+        decision_state_manager=PositionDecisionStateStore(logging.getLogger("test")),
         execution_state_manager=M3PositionStateManager(logger=None),
-        decision_engine=M2DecisionEngine(),
+        decision_engine=SellDecisionEngine(),
         logger=logging.getLogger("test"),
         audit_logger=audit_logger,
         clock=_now,
@@ -501,9 +501,9 @@ def test_run_round_emits_submit_rejected_audit_event() -> None:
     service = M3ExecutionService(
         trade_gateway=trade_gateway,
         market_gateway=FakeMarketGateway(),
-        decision_state_manager=M2StateManager(logging.getLogger("test")),
+        decision_state_manager=PositionDecisionStateStore(logging.getLogger("test")),
         execution_state_manager=M3PositionStateManager(logger=None),
-        decision_engine=M2DecisionEngine(),
+        decision_engine=SellDecisionEngine(),
         logger=logging.getLogger("test"),
         audit_logger=audit_logger,
         clock=_now,
@@ -546,9 +546,9 @@ def test_run_round_delays_terminal_audit_until_execution_report_arrives() -> Non
             ],
         ),
         market_gateway=FakeMarketGateway(),
-        decision_state_manager=M2StateManager(logging.getLogger("test")),
+        decision_state_manager=PositionDecisionStateStore(logging.getLogger("test")),
         execution_state_manager=M3PositionStateManager(logger=None),
-        decision_engine=M2DecisionEngine(),
+        decision_engine=SellDecisionEngine(),
         logger=logging.getLogger("test"),
         audit_logger=audit_logger,
         clock=lambda: submit_time,
@@ -588,9 +588,9 @@ def test_run_round_uses_reconcile_timeout_when_terminal_audit_is_still_pending()
             execution_reports=[()],
         ),
         market_gateway=FakeMarketGateway(),
-        decision_state_manager=M2StateManager(logging.getLogger("test")),
+        decision_state_manager=PositionDecisionStateStore(logging.getLogger("test")),
         execution_state_manager=M3PositionStateManager(logger=None),
-        decision_engine=M2DecisionEngine(),
+        decision_engine=SellDecisionEngine(),
         logger=logging.getLogger("test"),
         audit_logger=audit_logger,
         clock=lambda: submit_time,

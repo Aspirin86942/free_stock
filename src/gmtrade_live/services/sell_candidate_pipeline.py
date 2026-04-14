@@ -187,7 +187,7 @@ class SellCandidatePipeline:
                 "position_count": len(positions),
                 "candidate_count": len(candidates),
                 "tombstone_count": len(tombstones),
-                "change_symbol_count": len({event.symbol for event in change_events}),
+                "changed_symbol_count": len({event.symbol for event in change_events}),
                 "duration_ms": duration_ms,
             },
         )

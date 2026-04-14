@@ -14,13 +14,13 @@ from gmtrade_live.models import (
     PositionSnapshot,
     QuoteSnapshot,
 )
-from gmtrade_live.services.m2_decision_engine import M2DecisionEngine
-from gmtrade_live.services.m2_state_manager import M2StateManager
 from gmtrade_live.services.m3_execution_service import M3ExecutionService
 from gmtrade_live.services.m3_state_manager import (
     M3ExecutionState,
     M3PositionStateManager,
 )
+from gmtrade_live.services.position_decision_state import PositionDecisionStateStore
+from gmtrade_live.services.sell_decision_engine import SellDecisionEngine
 
 
 def _now() -> datetime:
@@ -164,9 +164,9 @@ def test_m3_once_round_keeps_polling_until_budget_exhausted_or_order_finishes() 
             ],
         ),
         market_gateway=FakeMarketGateway(),
-        decision_state_manager=M2StateManager(logging.getLogger("test")),
+        decision_state_manager=PositionDecisionStateStore(logging.getLogger("test")),
         execution_state_manager=M3PositionStateManager(logger=None),
-        decision_engine=M2DecisionEngine(),
+        decision_engine=SellDecisionEngine(),
         logger=logging.getLogger("test"),
         clock=_now,
         timer=FakeTimer([0.0, 0.1, 0.2, 0.7, 0.8, 1.3, 1.4]),
@@ -195,9 +195,9 @@ def test_open_order_continues_in_next_round_after_timeout() -> None:
     service = M3ExecutionService(
         trade_gateway=trade_gateway,
         market_gateway=FakeMarketGateway(),
-        decision_state_manager=M2StateManager(logging.getLogger("test")),
+        decision_state_manager=PositionDecisionStateStore(logging.getLogger("test")),
         execution_state_manager=M3PositionStateManager(logger=None),
-        decision_engine=M2DecisionEngine(),
+        decision_engine=SellDecisionEngine(),
         logger=logging.getLogger("test"),
         clock=_now,
         timer=FakeTimer([0.0, 0.1, 1.2, 2.0, 2.1, 2.2]),

@@ -6,12 +6,12 @@ from zoneinfo import ZoneInfo
 
 from gmtrade_live.models import (
     CandidateRound,
+    CandidateRoundSummary,
     DecisionChangeEvent,
     DecisionLifecycleState,
     DecisionObservationReport,
     DecisionPositionStateSnapshot,
     DecisionResult,
-    DecisionRoundSummary,
     SellCandidate,
 )
 
@@ -99,7 +99,7 @@ def test_decision_observation_report_contains_summary_and_change_events() -> Non
         last_decision_at=_now(),
     )
     candidate_round = CandidateRound(
-        summary=DecisionRoundSummary(
+        summary=CandidateRoundSummary(
             round_no=1,
             session_state="trading",
             position_count=1,
@@ -133,4 +133,3 @@ def test_decision_observation_report_contains_summary_and_change_events() -> Non
         "trigger_activated",
         "submit_permission_granted",
     )
-

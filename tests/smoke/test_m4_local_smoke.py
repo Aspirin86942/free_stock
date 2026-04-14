@@ -125,15 +125,19 @@ def _write_smoke_config(tmp_path: Path, log_dir: Path) -> Path:
 
 
 def _patch_m2_service(monkeypatch, *, clock, timer: FakeTimer) -> None:
-    """替换 M2DryRunService，稳定 clock/timer 输出，便于 smoke 在任意时间快速重复跑。"""
+    """替换 SellCandidatePipeline，稳定 clock/timer 输出，便于 smoke 在任意时间快速重复跑。
 
-    class StableM2Service(bootstrap.M2DryRunService):
+    注意：当前 run_m2_dry_run() 的接线是 SellCandidatePipeline + DecisionObserverService，
+    smoke 只需要在新的接线点注入稳定时间即可，不应恢复旧 M2DryRunService API。
+    """
+
+    class StablePipeline(bootstrap.SellCandidatePipeline):
         def __init__(self, *args, **kwargs):
             kwargs.setdefault("clock", clock)
             kwargs.setdefault("timer", timer)
             super().__init__(*args, **kwargs)
 
-    monkeypatch.setattr(bootstrap, "M2DryRunService", StableM2Service)
+    monkeypatch.setattr(bootstrap, "SellCandidatePipeline", StablePipeline)
 
 
 def _patch_m3_service(monkeypatch, *, clock, timer: FakeTimer, sleep) -> None:
