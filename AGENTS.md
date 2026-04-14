@@ -27,7 +27,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 conda run -n stock_analysis python -m pip install -e .
 
 # 自动卖出入口（需要先启动掘金终端）
-conda run -n stock_analysis python main.py --config config/sim_account.yaml
+conda run --no-capture-output -n stock_analysis python main.py --config config/sim_account.yaml
 ```
 
 ### 入口清单
