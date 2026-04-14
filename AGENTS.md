@@ -25,38 +25,20 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 # 安装项目（开发模式）
 conda run -n stock_analysis python -m pip install -e .
 
-# 运行主程序（需要先启动掘金终端）
+# 正式入口：自动卖出执行（需要先启动掘金终端）
 conda run -n stock_analysis python main.py --config config/sim_account.yaml
 
 # 验证掘金 API 连接
 conda run -n stock_analysis python scripts/verify_gm_api.py
 ```
 
-### M1 手动验证
+### Debug 工具：决策观测
 ```bash
-# M1 手动卖出验证
-conda run -n stock_analysis python main.py --config config/sim_account.yaml --mode m1 \
-  --side sell --symbol SHSE.600839 --volume 100 --price-type market --timeout-seconds 60
+# 单轮观测
+conda run -n stock_analysis python observe_decisions.py --config config/sim_account.yaml --once
 
-# M1 手动买入验证
-conda run -n stock_analysis python main.py --config config/sim_account.yaml --mode m1 \
-  --side buy --symbol SHSE.600839 --volume 100 --price-type limit --price 10.50 \
-  --timeout-seconds 120
-```
-
-### M2 决策 dry-run
-```bash
-# M2 决策 dry-run（单轮）
-conda run -n stock_analysis python main.py --config config/sim_account.yaml --mode m2 --once
-
-# M2 决策 dry-run（连续 3 轮）
-conda run -n stock_analysis python main.py --config config/sim_account.yaml --mode m2 --max-rounds 3
-```
-
-### M3 自动卖出执行
-```bash
-# M3 自动卖出执行（单轮）
-conda run -n stock_analysis python main.py --config config/sim_account.yaml --mode m3 --once
+# 连续 3 轮观测
+conda run -n stock_analysis python observe_decisions.py --config config/sim_account.yaml --max-rounds 3
 ```
 
 ### 测试
@@ -80,7 +62,7 @@ conda run -n stock_analysis pytest tests/integration/
 - **关键配置项**：
   - `gmtrade_endpoint`: 必须是 `127.0.0.1:7001`（本地掘金终端），不是远程地址
   - `account_id` 和 `token`：从掘金终端获取
-  - `sell_quantity_ratio`：M3 每轮自动卖出的仓位比例，必须满足 `0 < ratio <= 1`
+  - `sell_quantity_ratio`：每轮自动卖出的仓位比例，必须满足 `0 < ratio <= 1`
 
 ## 架构设计
 
@@ -136,8 +118,8 @@ conda run -n stock_analysis pytest tests/integration/
 
 ## 测试策略
 
-### M0 连通性验证
-当前阶段（M0）重点验证：
+### 连通性验证
+重点验证：
 1. 掘金 API 连接正常
 2. 能读取账户资金
 3. 能读取持仓列表

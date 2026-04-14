@@ -1,6 +1,6 @@
 account_id: ${GM_ACCOUNT_ID}
 token: ${GM_TOKEN}
-strategy_name: gmtrade-live-m0
+strategy_name: gmtrade-live-auto-sell
 poll_interval_seconds: 5
 take_profit_ratio: "0.05"
 stop_loss_ratio: "0.03"

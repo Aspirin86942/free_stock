@@ -19,7 +19,7 @@ def test_load_config_reads_and_resolves_environment_values(
             [
                 "account_id: ${GM_ACCOUNT_ID}",
                 "token: ${GM_TOKEN}",
-                "strategy_name: gmtrade-live-m0",
+                "strategy_name: gmtrade-live-auto-sell",
                 "poll_interval_seconds: 5",
                 "take_profit_ratio: '0.05'",
                 "stop_loss_ratio: '0.03'",
@@ -62,7 +62,7 @@ def test_load_config_defaults_gmtrade_endpoint_to_local_terminal(tmp_path: Path)
             [
                 "account_id: demo-account",
                 "token: demo-token",
-                "strategy_name: gmtrade-live-m0",
+                "strategy_name: gmtrade-live-auto-sell",
                 "poll_interval_seconds: 5",
                 "take_profit_ratio: '0.05'",
                 "stop_loss_ratio: '0.03'",
@@ -86,7 +86,7 @@ def test_load_config_accepts_futures_placeholder_mode(tmp_path: Path) -> None:
             [
                 "account_id: demo-account",
                 "token: demo-token",
-                "strategy_name: gmtrade-live-m0",
+                "strategy_name: gmtrade-live-auto-sell",
                 "poll_interval_seconds: 5",
                 "take_profit_ratio: '0.05'",
                 "stop_loss_ratio: '0.03'",
@@ -116,7 +116,7 @@ def test_load_config_reads_sell_quantity_ratio(
             [
                 "account_id: ${GM_ACCOUNT_ID}",
                 "token: ${GM_TOKEN}",
-                "strategy_name: gmtrade-live-m0",
+                "strategy_name: gmtrade-live-auto-sell",
                 "poll_interval_seconds: 5",
                 "take_profit_ratio: '0.05'",
                 "stop_loss_ratio: '0.03'",
@@ -142,7 +142,7 @@ def test_load_config_rejects_missing_sell_quantity_ratio(tmp_path: Path) -> None
             [
                 "account_id: demo-account",
                 "token: demo-token",
-                "strategy_name: gmtrade-live-m0",
+                "strategy_name: gmtrade-live-auto-sell",
                 "poll_interval_seconds: 5",
                 "take_profit_ratio: '0.05'",
                 "stop_loss_ratio: '0.03'",
@@ -166,7 +166,7 @@ def test_load_config_rejects_sell_quantity_ratio_above_one(tmp_path: Path) -> No
             [
                 "account_id: demo-account",
                 "token: demo-token",
-                "strategy_name: gmtrade-live-m0",
+                "strategy_name: gmtrade-live-auto-sell",
                 "poll_interval_seconds: 5",
                 "take_profit_ratio: '0.05'",
                 "stop_loss_ratio: '0.03'",

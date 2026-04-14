@@ -13,7 +13,7 @@ import gmtrade_live.app_runner as app_runner
 def _fake_config() -> SimpleNamespace:
     return SimpleNamespace(
         account_id="demo-account",
-        strategy_name="gmtrade-live-m1",
+        strategy_name="gmtrade-live-auto-sell",
         log_dir=Path("logs"),
         poll_interval_seconds=5,
         sell_quantity_ratio=Decimal("1.0"),
@@ -92,8 +92,8 @@ def test_run_decision_observer_prints_summary_and_change_details(monkeypatch, ca
 
     lines = [line for line in capsys.readouterr().out.splitlines() if line]
     assert exit_code == 0
-    assert '"kind": "m2_round_summary"' in lines[0]
-    assert '"kind": "m2_change_detail"' in lines[1]
+    assert '"kind": "decision_round_summary"' in lines[0]
+    assert '"kind": "decision_change_detail"' in lines[1]
 
 
 def test_run_decision_observer_logs_and_continues_after_round_exception(
@@ -156,7 +156,7 @@ def test_run_decision_observer_logs_and_continues_after_round_exception(
     lines = [line for line in capsys.readouterr().out.splitlines() if line]
     assert exit_code == 0
     assert '"kind": "decision_round_error"' in lines[0]
-    assert '"kind": "m2_round_summary"' in lines[1]
+    assert '"kind": "decision_round_summary"' in lines[1]
     assert any("round_failed entry=decision_observer round=1" in call for call in logger_calls)
     assert sleep_calls == [5]
 
@@ -357,10 +357,10 @@ def test_run_auto_sell_prints_summary_block_and_execution_details(
 
     lines = [line for line in capsys.readouterr().out.splitlines() if line]
     assert exit_code == 0
-    assert '"kind": "m3_round_summary"' in lines[0]
-    assert '"kind": "m3_block_detail"' in lines[1]
+    assert '"kind": "auto_sell_round_summary"' in lines[0]
+    assert '"kind": "sell_block_detail"' in lines[1]
     assert '"decision_lifecycle_state": "watching"' in lines[1]
-    assert '"kind": "m3_execution_detail"' in lines[2]
+    assert '"kind": "sell_execution_detail"' in lines[2]
     assert '"decision_trigger_reason": "take_profit_triggered"' in lines[2]
     assert '"submit_accepted_at": "2026-04-10T10:00:00+08:00"' in lines[2]
     assert '"order_terminal_latency_ms": null' in lines[2]

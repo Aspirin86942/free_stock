@@ -1,4 +1,4 @@
-"""基础 smoke 门禁，确保 M2/M3 在本地可跑并生成关键日志。"""
+"""基础 smoke 门禁，确保决策观测与自动卖出在本地可跑并生成关键日志。"""
 
 from __future__ import annotations
 
@@ -26,7 +26,7 @@ BASE_TIME = datetime(2026, 4, 13, 10, 0, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
 
 
 class FakeTimer:
-    """保证 M2/M3 计算调用间隔时使用可控值，避免依赖真实系统时间。"""
+    """保证观测/卖出计算调用间隔时使用可控值，避免依赖真实系统时间。"""
 
     def __init__(self, *, start: float = 0.0) -> None:
         self._value = start
@@ -102,13 +102,13 @@ def _write_smoke_config(tmp_path: Path, log_dir: Path) -> Path:
     生成独立配置，确保 log_dir 可控且不和主线测试冲突。
     """
 
-    config_path = tmp_path / f"m4_smoke_{log_dir.name}.yaml"
+    config_path = tmp_path / f"auto_sell_smoke_{log_dir.name}.yaml"
     config_path.write_text(
         textwrap.dedent(
             f"""
             account_id: smoke_account
             token: smoke_token
-            strategy_name: gmtrade_live_smoke
+            strategy_name: gmtrade-live-auto-sell
             poll_interval_seconds: 1
             take_profit_ratio: 0.05
             stop_loss_ratio: 0.03
@@ -124,11 +124,11 @@ def _write_smoke_config(tmp_path: Path, log_dir: Path) -> Path:
     return config_path
 
 
-def _patch_m2_service(monkeypatch, *, clock, timer: FakeTimer) -> None:
+def _patch_decision_service(monkeypatch, *, clock, timer: FakeTimer) -> None:
     """替换 SellCandidatePipeline，稳定 clock/timer 输出，便于 smoke 在任意时间快速重复跑。
 
     注意：当前 run_decision_observer() 的接线是 SellCandidatePipeline + DecisionObserverService，
-    smoke 只需要在新的接线点注入稳定时间即可，不应恢复旧 M2DryRunService API。
+    smoke 只需要在新的接线点注入稳定时间即可，不应恢复旧 dry-run API。
     """
 
     class StablePipeline(app_runner.SellCandidatePipeline):
@@ -140,7 +140,7 @@ def _patch_m2_service(monkeypatch, *, clock, timer: FakeTimer) -> None:
     monkeypatch.setattr(app_runner, "SellCandidatePipeline", StablePipeline)
 
 
-def _patch_m3_service(monkeypatch, *, clock, timer: FakeTimer, sleep) -> None:
+def _patch_auto_sell_service(monkeypatch, *, clock, timer: FakeTimer, sleep) -> None:
     """替换 M3ExecutionService，稳定 clock/timer/sleep，避免莫名的等待或跳动。"""
 
     class StablePipeline(app_runner.SellCandidatePipeline):
@@ -227,14 +227,14 @@ def _build_order_execution_snapshots() -> tuple[OrderExecutionSnapshot, ...]:
     return (snapshot,)
 
 
-def _filter_m3_details(output: str) -> list[dict[str, object]]:
+def _filter_execution_details(output: str) -> list[dict[str, object]]:
     details: list[dict[str, object]] = []
     for raw_line in output.splitlines():
         try:
             payload = json.loads(raw_line)
         except json.JSONDecodeError:
             continue
-        if payload.get("kind") == "m3_execution_detail":
+        if payload.get("kind") == "sell_execution_detail":
             details.append(payload)
     return details
 
@@ -260,16 +260,16 @@ def _find_terminal_detail(details: list[dict[str, object]]) -> dict[str, object]
 
 
 @pytest.mark.usefixtures("tmp_path")
-def test_local_m2_smoke_emits_summary_and_runtime_log(
+def test_local_decision_observer_smoke_emits_summary_and_runtime_log(
     tmp_path: Path,
     capsys,
     monkeypatch,
 ) -> None:
-    log_dir = tmp_path / "logs_m2"
+    log_dir = tmp_path / "logs_decision"
     config_path = _write_smoke_config(tmp_path, log_dir)
     _patch_sess_state(monkeypatch)
     timer = FakeTimer()
-    _patch_m2_service(monkeypatch, clock=lambda: BASE_TIME, timer=timer)
+    _patch_decision_service(monkeypatch, clock=lambda: BASE_TIME, timer=timer)
 
     trade_gateway = FakeTradeGateway(
         positions=( _build_position(), ),
@@ -295,22 +295,22 @@ def test_local_m2_smoke_emits_summary_and_runtime_log(
     runtime_log = (log_dir / "runtime.log").read_text(encoding="utf-8")
 
     assert exit_code == 0
-    assert "m2_round_summary" in captured.out
+    assert "decision_round_summary" in captured.out
     assert "round_started entry=decision_observer" in runtime_log
     assert "round_completed entry=decision_observer" in runtime_log
 
 
 @pytest.mark.usefixtures("tmp_path")
-def test_local_m3_smoke_emits_audit_log_and_latency(
+def test_local_auto_sell_smoke_emits_audit_log_and_latency(
     tmp_path: Path,
     capsys,
     monkeypatch,
 ) -> None:
-    log_dir = tmp_path / "logs_m3"
+    log_dir = tmp_path / "logs_auto_sell"
     config_path = _write_smoke_config(tmp_path, log_dir)
     _patch_sess_state(monkeypatch)
     timer = FakeTimer()
-    _patch_m3_service(
+    _patch_auto_sell_service(
         monkeypatch,
         clock=lambda: BASE_TIME,
         timer=timer,
@@ -339,7 +339,7 @@ def test_local_m3_smoke_emits_audit_log_and_latency(
         reconcile_timeout_seconds=3,
     )
     captured = capsys.readouterr()
-    details = _filter_m3_details(captured.out)
+    details = _filter_execution_details(captured.out)
     terminal_detail = _find_terminal_detail(details)
     runtime_log = (log_dir / "runtime.log").read_text(encoding="utf-8")
     order_audit = (log_dir / "order_audit.log").read_text(encoding="utf-8")
@@ -354,8 +354,8 @@ def test_local_m3_smoke_emits_audit_log_and_latency(
     ]
 
     assert exit_code == 0
-    assert "m3_round_summary" in captured.out
-    assert details, "期待至少有一个 m3_execution_detail"
+    assert "auto_sell_round_summary" in captured.out
+    assert details, "期待至少有一个 sell_execution_detail"
     assert terminal_detail is not None, "期待终态 detail 暴露 terminal_state_at"
     assert terminal_detail["order_terminal_latency_ms"] == 1000
     assert submit_events, "期待 order_audit.log 包含 submit_accepted 事件"

@@ -97,7 +97,7 @@ def run_decision_observer(
     once: bool,
     max_rounds: int | None,
 ) -> int:
-    """执行 M2 决策 dry-run 并输出结构化结果。"""
+    """执行决策观测并输出结构化结果。"""
     config = load_config(config_path)
     _resolve_current_session_state(config)
     logger = setup_logging(config.strategy_name, config.log_dir)
@@ -160,7 +160,7 @@ def run_decision_observer(
             print(
                 json.dumps(
                     {
-                        "kind": "m2_round_summary",
+                        "kind": "decision_round_summary",
                         "round": report.summary.round_no,
                         "session_state": report.summary.session_state,
                         "position_count": report.summary.position_count,
@@ -183,7 +183,7 @@ def run_decision_observer(
                         event.state_snapshot.lifecycle_state,
                     )
                 payload = {
-                    "kind": "m2_change_detail",
+                    "kind": "decision_change_detail",
                     "symbol": event.symbol,
                     "change_tags": list(event.change_tags),
                     "lifecycle_state": lifecycle_state,
@@ -237,7 +237,7 @@ def run_auto_sell(
     max_rounds: int | None,
     reconcile_timeout_seconds: int,
 ) -> int:
-    """执行 M3 自动卖出闭环并输出结构化结果。"""
+    """执行自动卖出闭环并输出结构化结果。"""
     config = load_config(config_path)
     _resolve_current_session_state(config)
     logger = setup_logging(config.strategy_name, config.log_dir)
@@ -312,7 +312,7 @@ def run_auto_sell(
         print(
             json.dumps(
                 {
-                    "kind": "m3_round_summary",
+                    "kind": "auto_sell_round_summary",
                     "round": report.summary.round_no,
                     "session_state": report.summary.session_state,
                     "position_count": report.summary.position_count,
@@ -330,7 +330,7 @@ def run_auto_sell(
             print(
                 json.dumps(
                     {
-                        "kind": "m3_block_detail",
+                        "kind": "sell_block_detail",
                         "symbol": block.symbol,
                         "decision_lifecycle_state": block.decision_lifecycle_state,
                         "decision_should_sell": block.decision_should_sell,
@@ -357,7 +357,7 @@ def run_auto_sell(
             print(
                 json.dumps(
                     {
-                        "kind": "m3_execution_detail",
+                        "kind": "sell_execution_detail",
                         "symbol": detail.symbol,
                         "change_tags": list(detail.change_tags),
                         "decision_lifecycle_state": detail.decision_lifecycle_state,
