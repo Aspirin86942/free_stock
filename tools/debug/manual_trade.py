@@ -7,7 +7,7 @@ import json
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -549,21 +549,54 @@ def _resolve_current_session_state(config: AppConfig) -> TradingSessionState:
     )
 
 
+def _parse_positive_int(value: str) -> int:
+    """解析必须为正数的整数参数。"""
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("必须是整数") from exc
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("必须大于 0")
+    return parsed
+
+
+def _parse_decimal(value: str) -> Decimal:
+    """解析小数参数，非法值直接报错。"""
+    try:
+        return Decimal(value)
+    except (InvalidOperation, ValueError) as exc:
+        raise argparse.ArgumentTypeError("price 必须是合法小数") from exc
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="GMTrade manual trade debug")
     parser.add_argument("--config", required=True, help="Path to YAML config file")
     parser.add_argument("--symbol", required=True)
-    parser.add_argument("--volume", type=int, required=True)
-    parser.add_argument("--price-type", required=True)
-    parser.add_argument("--price", type=Decimal)
-    parser.add_argument("--timeout-seconds", type=int, required=True)
-    parser.add_argument("--side", required=True)
+    parser.add_argument("--volume", type=_parse_positive_int, required=True)
+    parser.add_argument(
+        "--price-type",
+        required=True,
+        choices=("market", "limit"),
+    )
+    parser.add_argument("--price", type=_parse_decimal)
+    parser.add_argument("--timeout-seconds", type=_parse_positive_int, required=True)
+    parser.add_argument("--side", required=True, choices=("buy", "sell"))
     return parser
+
+
+def _validate_cli_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    """先拦截明显非法输入，避免触发真实柜台连接。"""
+    if args.price_type == "market" and args.price is not None:
+        parser.error("price_type=market 时不应传入 price")
+    if args.price_type == "limit" and (args.price is None or args.price <= Decimal("0")):
+        parser.error("price_type=limit 时必须提供大于 0 的 price")
 
 
 def main(argv: list[str] | None = None) -> int:
     """调试入口：提交委托并等待状态确认。"""
-    args = _build_parser().parse_args(argv)
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    _validate_cli_args(args, parser)
     config = load_config(Path(args.config))
     _resolve_current_session_state(config)
     logger = setup_logging(config.strategy_name, config.log_dir)
