@@ -43,6 +43,9 @@ def test_active_files_do_not_contain_staged_mode_names() -> None:
     for target in _iter_scan_targets(repo_root):
         for text_file in _iter_text_files(target):
             relative_path = text_file.relative_to(repo_root)
+            normalized_relative_path = relative_path.as_posix()
+            if _STAGE_NAME_PATTERN.search(normalized_relative_path):
+                violations.append(f"{relative_path}: staged name appears in file path")
             content = text_file.read_text(encoding="utf-8")
             for line_no, line in enumerate(content.splitlines(), start=1):
                 if _STAGE_NAME_PATTERN.search(line):

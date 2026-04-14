@@ -11,6 +11,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 - 单账户、单策略、统一参数
 - Python 3.10+，单进程常驻
 - 所有交易与行情统一走掘金官方接口
+- 主干命名已完成去阶段化；正式入口、`services/` 文件名、测试名和文档口径不再使用旧阶段编号
 
 ## 开发命令
 
@@ -72,19 +73,24 @@ conda run -n stock_analysis pytest tests/integration/
 ### 四层架构
 
 ```
-基础设施层 (bootstrap.py, config.py, logging_setup.py, session.py)
-  ├─ 配置加载、日志初始化、交易时段判断、启动停止控制
+基础设施层 (app_runner.py, config.py, logging_setup.py, session.py)
+  ├─ 配置加载、日志初始化、交易时段判断、正式入口编排
   │
 数据接入层 (gateways/)
   ├─ GMTradeGateway: 账户资金、持仓查询
   ├─ GMCurrentQuoteGateway: 行情数据获取
   ├─ protocols.py: Gateway 接口定义
   │
-核心决策层 (services/)
-  ├─ 逐标的状态管理、止盈止损判断、卖出许可判断
+共享评估层 (services/)
+  ├─ SellCandidatePipeline: 拉持仓、拉行情、生成候选卖出标的
+  ├─ SellDecisionEngine: 止盈止损判断、卖出许可判断
+  ├─ PositionDecisionStateStore: 逐标的决策状态与墓碑状态
+  ├─ DecisionObserverService: 只读观测输出
   │
-交易执行层
-  ├─ 卖单执行、委托跟踪、成交收口、防重复卖单
+交易执行层 (services/)
+  ├─ AutoSellService: 卖单执行、委托跟踪、成交收口、防重复卖单
+  ├─ SellQuantityPolicy: 卖量规划
+  ├─ OrderExecutionStateStore: 执行状态机
 ```
 
 ### 架构约束（必须遵守）
@@ -93,12 +99,18 @@ conda run -n stock_analysis pytest tests/integration/
 2. **职责分离**：核心决策层只负责"该不该卖"，不直接发单；交易执行层只负责"怎么卖"
 3. **状态隔离**：状态必须按标的（symbol）隔离，禁止用单一全局布尔值
 4. **不可变模型**：所有 dataclass 使用 `frozen=True, slots=True`（参考 models.py）
+5. **命名回归禁止**：活跃文件与文件路径中禁止重新引入旧阶段编号；以 `tests/unit/test_stage_name_guard.py` 为门禁
 
 ### 关键模块
 
 - **models.py**: 核心数据模型（CashSnapshot, PositionSnapshot, QuoteSnapshot）
 - **precision.py**: 金额精度处理，所有金额必须用 `Decimal`，禁止 `float`
-- **state.py**: 标的状态管理
+- **app_runner.py**: 正式自动卖出入口与正式决策观测入口的运行编排
+- **sell_candidate_pipeline.py**: 共享评估管线，统一输出候选卖出标的与变化事件
+- **position_decision_state.py**: 决策状态管理（watching / tombstone）
+- **order_execution_state.py**: 执行状态管理（submitting / submitted / filled 等）
+- **auto_sell_service.py**: 自动卖出执行编排
+- **decision_observer.py**: 决策观测编排
 - **session.py**: 交易时段判断（pre_open, in_session, post_close）
 - **errors.py**: 自定义异常定义
 
@@ -133,6 +145,8 @@ conda run -n stock_analysis pytest tests/integration/
 ### 单元测试 vs 集成测试
 - **单元测试**（tests/unit/）：不依赖掘金终端，使用 mock
 - **集成测试**（tests/integration/）：需要掘金终端运行，测试真实 API 调用
+- **调试脚本测试**（tests/debug/）：覆盖 `tools/debug` 下的连通性检查与手工交易脚本
+- **命名门禁**：`tests/unit/test_stage_name_guard.py` 负责阻止阶段化命名重新回流到活跃文件
 
 ## 常见问题
 
@@ -150,6 +164,7 @@ conda run -n stock_analysis pytest tests/integration/
 
 ## 文档参考
 
+- 运行说明：`docs/auto-sell-runtime.md`
 - 系统规划书：`docs/Proposal/量化交易系统规划书.md`
 - 分层 Spec：`docs/superpowers/specs/01-基础设施层-spec.md` 等
 - 实施计划：`docs/superpowers/plans/`
