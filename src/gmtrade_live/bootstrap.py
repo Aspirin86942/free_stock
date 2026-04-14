@@ -23,9 +23,66 @@ from gmtrade_live.services.sell_candidate_pipeline import SellCandidatePipeline
 from gmtrade_live.services.sell_decision_engine import SellDecisionEngine
 from gmtrade_live.session import resolve_trading_session
 
-# 兼容 seam：保留可 monkeypatch 的 M3ExecutionService 名称；
-# 默认指向产品语义执行服务，避免主路径直接依赖旧 m3_execution_service 模块。
-M3ExecutionService = AutoSellService
+
+class M3ExecutionService(AutoSellService):
+    """bootstrap 本地兼容 seam。
+
+    目标：
+    - 主路径使用产品语义参数（candidate_pipeline）实例化；
+    - 仍兼容旧参数（market_gateway/decision_state_manager/decision_engine）。
+    """
+
+    def __init__(
+        self,
+        *,
+        trade_gateway,
+        execution_state_manager,
+        logger,
+        audit_logger=None,
+        candidate_pipeline=None,
+        market_gateway=None,
+        decision_state_manager=None,
+        decision_engine=None,
+        clock=None,
+        timer=None,
+        sleep=None,
+    ) -> None:
+        resolved_pipeline = candidate_pipeline
+        if resolved_pipeline is None:
+            missing: list[str] = []
+            if market_gateway is None:
+                missing.append("market_gateway")
+            if decision_state_manager is None:
+                missing.append("decision_state_manager")
+            if decision_engine is None:
+                missing.append("decision_engine")
+            if missing:
+                missing_text = ", ".join(missing)
+                raise TypeError(
+                    "M3ExecutionService missing required arguments for compatibility path: "
+                    f"{missing_text}"
+                )
+            # 旧参数也要进入共享候选结果执行链，不能退回旧实现。
+            resolved_pipeline = SellCandidatePipeline(
+                trade_gateway=trade_gateway,
+                market_gateway=market_gateway,
+                state_store=decision_state_manager,
+                decision_engine=decision_engine,
+                logger=logger,
+                clock=clock,
+                timer=timer,
+            )
+
+        super().__init__(
+            trade_gateway=trade_gateway,
+            candidate_pipeline=resolved_pipeline,
+            execution_state_manager=execution_state_manager,
+            logger=logger,
+            audit_logger=audit_logger,
+            clock=clock,
+            timer=timer,
+            sleep=sleep,
+        )
 
 
 def _resolve_current_session_state(config) -> object:

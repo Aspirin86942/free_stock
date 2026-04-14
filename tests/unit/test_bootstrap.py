@@ -690,3 +690,26 @@ def test_run_m3_execution_prints_latency_fields(monkeypatch, capsys) -> None:
     assert "decision_engine" not in service_kwargs_list[0]
     assert '"order_terminal_latency_ms": 1000' in lines[1]
     assert '"submit_accepted_at": "2026-04-13T10:00:00+08:00"' in lines[1]
+
+
+def test_bootstrap_m3_execution_service_compat_accepts_legacy_constructor_args(monkeypatch) -> None:
+    created_pipelines: list[SimpleNamespace] = []
+
+    def _fake_pipeline(**kwargs):
+        pipeline = SimpleNamespace(**kwargs)
+        created_pipelines.append(pipeline)
+        return pipeline
+
+    monkeypatch.setattr(bootstrap, "SellCandidatePipeline", _fake_pipeline)
+
+    service = bootstrap.M3ExecutionService(
+        trade_gateway=SimpleNamespace(),
+        market_gateway=SimpleNamespace(),
+        decision_state_manager=SimpleNamespace(),
+        execution_state_manager=SimpleNamespace(),
+        decision_engine=SimpleNamespace(),
+        logger=SimpleNamespace(),
+    )
+
+    assert created_pipelines
+    assert service._candidate_pipeline is created_pipelines[0]
