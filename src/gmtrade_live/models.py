@@ -276,10 +276,32 @@ class SellCandidate:
 
 
 @dataclass(frozen=True, slots=True)
-class CandidateRound:
-    """候选卖出标的单轮评估结果（共享管线中间产物）。"""
+class CandidateRoundSummary:
+    """共享评估轮次摘要（中间语义）。
 
-    summary: DecisionRoundSummary
+    该模型属于“共享评估层”，用于承载一轮评估的统计事实；
+    观测层会把它投影成对外稳定的 DecisionRoundSummary。
+    """
+
+    round_no: int
+    session_state: str
+    position_count: int
+    watching_count: int
+    tombstone_count: int
+    should_sell_count: int
+    can_submit_sell_count: int
+    changed_symbol_count: int
+    duration_ms: int
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateRound:
+    """候选卖出标的单轮评估结果（共享管线中间产物）。
+
+    注意：该结果不等同于观测输出，不包含 DecisionObservationReport 语义。
+    """
+
+    summary: CandidateRoundSummary
     candidates: tuple[SellCandidate, ...]
     tombstones: tuple[DecisionPositionStateSnapshot, ...]
     change_events: tuple[DecisionChangeEvent, ...]

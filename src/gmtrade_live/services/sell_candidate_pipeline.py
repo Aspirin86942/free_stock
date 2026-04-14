@@ -19,11 +19,11 @@ from zoneinfo import ZoneInfo
 from gmtrade_live.config import AppConfig
 from gmtrade_live.gateways.protocols import MarketGateway, TradeGateway
 from gmtrade_live.models import (
+    CandidateRound,
+    CandidateRoundSummary,
     DecisionChangeEvent,
     DecisionLifecycleState,
-    DecisionObservationReport,
     DecisionResult,
-    DecisionRoundSummary,
     SellCandidate,
 )
 from gmtrade_live.session import resolve_trading_session
@@ -52,7 +52,7 @@ class SellCandidatePipeline:
         self._timer = timer or perf_counter
         self._last_decisions: dict[str, DecisionResult] = {}
 
-    def run_round(self, *, config: AppConfig, round_no: int) -> DecisionObservationReport:
+    def run_round(self, *, config: AppConfig, round_no: int) -> CandidateRound:
         """执行单轮“候选卖出标的”评估。"""
         started_at = self._timer()
         now = self._clock()
@@ -192,7 +192,7 @@ class SellCandidatePipeline:
             },
         )
 
-        summary = DecisionRoundSummary(
+        summary = CandidateRoundSummary(
             round_no=round_no,
             session_state=session_state.value,
             position_count=len(positions),
@@ -205,10 +205,9 @@ class SellCandidatePipeline:
             changed_symbol_count=len({event.symbol for event in change_events}),
             duration_ms=duration_ms,
         )
-        return DecisionObservationReport(
+        return CandidateRound(
             summary=summary,
             candidates=tuple(candidates),
             tombstones=tombstones,
             change_events=tuple(change_events),
         )
-

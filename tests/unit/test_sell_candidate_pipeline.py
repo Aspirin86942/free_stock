@@ -7,7 +7,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from gmtrade_live.config import AppConfig
-from gmtrade_live.models import PositionSnapshot, QuoteSnapshot
+from gmtrade_live.models import CandidateRound, PositionSnapshot, QuoteSnapshot
 from gmtrade_live.services.position_decision_state import PositionDecisionStateStore
 from gmtrade_live.services.sell_candidate_pipeline import SellCandidatePipeline
 from gmtrade_live.services.sell_decision_engine import SellDecisionEngine
@@ -89,11 +89,13 @@ def test_run_round_queries_quotes_for_volume_positions_only() -> None:
         timer=lambda: 0.0,
     )
 
-    report = pipeline.run_round(config=_config(), round_no=1)
+    result = pipeline.run_round(config=_config(), round_no=1)
 
     assert market_gateway.last_symbols == ["SHSE.600036"]
-    assert report.summary.position_count == 1
-    assert report.summary.should_sell_count == 1
+    assert isinstance(result, CandidateRound)
+    assert result.summary.position_count == 1
+    assert len(result.candidates) == 1
+    assert result.candidates[0].decision.should_sell is True
 
 
 def test_run_round_skips_quote_query_without_positions() -> None:
@@ -109,9 +111,10 @@ def test_run_round_skips_quote_query_without_positions() -> None:
         timer=lambda: 0.0,
     )
 
-    report = pipeline.run_round(config=_config(), round_no=1)
+    result = pipeline.run_round(config=_config(), round_no=1)
 
     assert market_gateway.last_symbols == []
-    assert report.summary.position_count == 0
-    assert report.summary.changed_symbol_count == 0
-
+    assert isinstance(result, CandidateRound)
+    assert result.summary.position_count == 0
+    assert result.candidates == ()
+    assert result.change_events == ()

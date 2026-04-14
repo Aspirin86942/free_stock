@@ -26,7 +26,7 @@ from gmtrade_live.models import (
     PositionSnapshot,
     QuoteSnapshot,
 )
-from gmtrade_live.services.m2_state_manager import M2StateManager
+from gmtrade_live.services.position_decision_state import PositionDecisionStateStore
 from gmtrade_live.services.m3_quantity_rules import build_sell_quantity_plan
 from gmtrade_live.services.m3_state_manager import (
     M3ExecutionState,
@@ -68,7 +68,7 @@ class M3ExecutionService:
         *,
         trade_gateway: TradeGateway,
         market_gateway: MarketGateway,
-        decision_state_manager: M2StateManager,
+        decision_state_manager: PositionDecisionStateStore,
         execution_state_manager: M3PositionStateManager,
         decision_engine,
         logger: logging.Logger,

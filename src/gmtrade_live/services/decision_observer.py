@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 
 from gmtrade_live.config import AppConfig
-from gmtrade_live.models import DecisionObservationReport
+from gmtrade_live.models import CandidateRound, DecisionObservationReport, DecisionRoundSummary
 
 
 class DecisionObserverService:
@@ -30,10 +30,26 @@ class DecisionObserverService:
         为什么这里只做委托：
         - 观测语义应与执行语义共享同一评估结果，避免“观测能看到、执行却算不出来”的差异。
         """
-        report = self._pipeline.run_round(config=config, round_no=round_no)
+        result: CandidateRound = self._pipeline.run_round(config=config, round_no=round_no)
+        summary = DecisionRoundSummary(
+            round_no=result.summary.round_no,
+            session_state=result.summary.session_state,
+            position_count=result.summary.position_count,
+            watching_count=result.summary.watching_count,
+            tombstone_count=result.summary.tombstone_count,
+            should_sell_count=result.summary.should_sell_count,
+            can_submit_sell_count=result.summary.can_submit_sell_count,
+            changed_symbol_count=result.summary.changed_symbol_count,
+            duration_ms=result.summary.duration_ms,
+        )
+        report = DecisionObservationReport(
+            summary=summary,
+            candidates=result.candidates,
+            tombstones=result.tombstones,
+            change_events=result.change_events,
+        )
         self._logger.debug(
             "decision_observer_round_completed",
             extra={"round_no": round_no, "position_count": report.summary.position_count},
         )
         return report
-

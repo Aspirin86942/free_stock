@@ -240,9 +240,7 @@ def test_run_m2_dry_run_prints_summary_and_change_details(monkeypatch, capsys) -
     )
     monkeypatch.setattr(bootstrap, "GMTradeGateway", lambda: FakeGateway())
     monkeypatch.setattr(bootstrap, "GMCurrentQuoteGateway", lambda: FakeGateway())
-    monkeypatch.setattr(bootstrap, "M2StateManager", lambda logger: SimpleNamespace())
-    monkeypatch.setattr(bootstrap, "M2DecisionEngine", lambda: SimpleNamespace())
-    monkeypatch.setattr(bootstrap, "M2DryRunService", FakeService)
+    monkeypatch.setattr(bootstrap, "DecisionObserverService", FakeService)
 
     exit_code = bootstrap.run_m2_dry_run(
         config_path=Path("config/sim_account.yaml"),
@@ -300,9 +298,7 @@ def test_run_m2_dry_run_logs_and_continues_after_round_exception(monkeypatch, ca
     )
     monkeypatch.setattr(bootstrap, "GMTradeGateway", lambda: FakeGateway())
     monkeypatch.setattr(bootstrap, "GMCurrentQuoteGateway", lambda: FakeGateway())
-    monkeypatch.setattr(bootstrap, "M2StateManager", lambda logger: SimpleNamespace())
-    monkeypatch.setattr(bootstrap, "M2DecisionEngine", lambda: SimpleNamespace())
-    monkeypatch.setattr(bootstrap, "M2DryRunService", FakeService)
+    monkeypatch.setattr(bootstrap, "DecisionObserverService", FakeService)
     sleep_calls: list[int] = []
     monkeypatch.setattr(bootstrap.time, "sleep", lambda seconds: sleep_calls.append(seconds))
 
@@ -359,9 +355,7 @@ def test_run_m2_dry_run_logs_round_started_and_completed(monkeypatch, capsys) ->
     )
     monkeypatch.setattr(bootstrap, "GMTradeGateway", lambda: FakeGateway())
     monkeypatch.setattr(bootstrap, "GMCurrentQuoteGateway", lambda: FakeGateway())
-    monkeypatch.setattr(bootstrap, "M2StateManager", lambda logger: SimpleNamespace())
-    monkeypatch.setattr(bootstrap, "M2DecisionEngine", lambda: SimpleNamespace())
-    monkeypatch.setattr(bootstrap, "M2DryRunService", FakeService)
+    monkeypatch.setattr(bootstrap, "DecisionObserverService", FakeService)
 
     exit_code = bootstrap.run_m2_dry_run(
         config_path=Path("config/sim_account.yaml"),
@@ -522,7 +516,7 @@ def test_run_m3_execution_prints_summary_block_and_execution_details(
     monkeypatch.setattr(bootstrap, "GMTradeGateway", lambda: FakeGateway())
     monkeypatch.setattr(bootstrap, "GMCurrentQuoteGateway", lambda: FakeGateway())
     monkeypatch.setattr(bootstrap, "M3PositionStateManager", lambda logger: SimpleNamespace())
-    monkeypatch.setattr(bootstrap, "M2DecisionEngine", lambda: SimpleNamespace())
+    monkeypatch.setattr(bootstrap, "SellDecisionEngine", lambda: SimpleNamespace())
     monkeypatch.setattr(bootstrap, "M3ExecutionService", FakeService)
 
     exit_code = bootstrap.run_m3_execution(
@@ -578,7 +572,7 @@ def test_run_m3_execution_returns_nonzero_when_round_raises(
     monkeypatch.setattr(bootstrap, "GMTradeGateway", lambda: FakeGateway())
     monkeypatch.setattr(bootstrap, "GMCurrentQuoteGateway", lambda: FakeGateway())
     monkeypatch.setattr(bootstrap, "M3PositionStateManager", lambda logger: SimpleNamespace())
-    monkeypatch.setattr(bootstrap, "M2DecisionEngine", lambda: SimpleNamespace())
+    monkeypatch.setattr(bootstrap, "SellDecisionEngine", lambda: SimpleNamespace())
     monkeypatch.setattr(bootstrap, "M3ExecutionService", FakeService)
 
     exit_code = bootstrap.run_m3_execution(
@@ -669,7 +663,7 @@ def test_run_m3_execution_prints_latency_fields(monkeypatch, capsys) -> None:
     monkeypatch.setattr(bootstrap, "GMTradeGateway", lambda: FakeGateway())
     monkeypatch.setattr(bootstrap, "GMCurrentQuoteGateway", lambda: FakeGateway())
     monkeypatch.setattr(bootstrap, "M3PositionStateManager", lambda logger: SimpleNamespace())
-    monkeypatch.setattr(bootstrap, "M2DecisionEngine", lambda: SimpleNamespace())
+    monkeypatch.setattr(bootstrap, "SellDecisionEngine", lambda: SimpleNamespace())
     monkeypatch.setattr(bootstrap, "M3ExecutionService", FakeService)
 
     exit_code = bootstrap.run_m3_execution(
