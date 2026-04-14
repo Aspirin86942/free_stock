@@ -5,10 +5,10 @@ from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from gmtrade_live.models import (
-    M3BlockDetail,
-    M3ExecutionDetail,
-    M3RoundReport,
-    M3RoundSummary,
+    AutoSellRoundReport,
+    AutoSellRoundSummary,
+    SellBlockDetail,
+    SellExecutionDetail,
     SellQuantityPlan,
 )
 
@@ -33,9 +33,9 @@ def test_sell_quantity_plan_carries_final_target_and_promotion_type() -> None:
     assert plan.promotion_type == "full_position"
 
 
-def test_m3_round_report_exposes_block_and_execution_details() -> None:
-    report = M3RoundReport(
-        summary=M3RoundSummary(
+def test_auto_sell_round_report_exposes_block_and_execution_details() -> None:
+    report = AutoSellRoundReport(
+        summary=AutoSellRoundSummary(
             round_no=1,
             session_state="trading",
             position_count=1,
@@ -47,7 +47,7 @@ def test_m3_round_report_exposes_block_and_execution_details() -> None:
             duration_ms=10,
         ),
         block_details=(
-            M3BlockDetail(
+            SellBlockDetail(
                 symbol="SHSE.600036",
                 decision_lifecycle_state="watching",
                 decision_should_sell=True,
@@ -69,7 +69,7 @@ def test_m3_round_report_exposes_block_and_execution_details() -> None:
             ),
         ),
         execution_details=(
-            M3ExecutionDetail(
+            SellExecutionDetail(
                 symbol="SHSE.600036",
                 change_tags=("submit_accepted",),
                 decision_lifecycle_state="watching",
@@ -100,10 +100,10 @@ def test_m3_round_report_exposes_block_and_execution_details() -> None:
     assert report.execution_details[0].cl_ord_id == "CL_1"
 
 
-def test_m3_execution_detail_exposes_timing_projection() -> None:
+def test_sell_execution_detail_exposes_timing_projection() -> None:
     moment = _now()
 
-    detail = M3ExecutionDetail(
+    detail = SellExecutionDetail(
         symbol="SHSE.600036",
         change_tags=("terminal_state_reached",),
         decision_lifecycle_state="watching",

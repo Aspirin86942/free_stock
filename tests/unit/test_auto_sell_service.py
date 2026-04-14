@@ -9,19 +9,23 @@ from zoneinfo import ZoneInfo
 
 from gmtrade_live.config import AppConfig
 from gmtrade_live.models import (
+    CandidateRound,
+    CandidateRoundSummary,
+    DecisionChangeEvent,
+    DecisionLifecycleState,
+    DecisionPositionStateSnapshot,
+    DecisionResult,
     OrderExecutionSnapshot,
     OrderStatusSnapshot,
     OrderSubmitResult,
     PositionSnapshot,
-    QuoteSnapshot,
+    SellCandidate,
 )
-from gmtrade_live.services.m3_execution_service import M3ExecutionService
-from gmtrade_live.services.m3_state_manager import (
-    M3ExecutionState,
-    M3PositionStateManager,
+from gmtrade_live.services.auto_sell_service import AutoSellService
+from gmtrade_live.services.order_execution_state import (
+    OrderExecutionState,
+    OrderExecutionStateStore,
 )
-from gmtrade_live.services.position_decision_state import PositionDecisionStateStore
-from gmtrade_live.services.sell_decision_engine import SellDecisionEngine
 
 
 def _now() -> datetime:
@@ -60,12 +64,81 @@ def _position(
     )
 
 
-def _quote(symbol: str = "SHSE.600036") -> QuoteSnapshot:
-    return QuoteSnapshot(
-        symbol=symbol,
-        last_price=Decimal("10.80"),
-        quote_time=_now(),
-        source="fake",
+def _decision(position: PositionSnapshot, *, can_submit_sell: bool = True) -> DecisionResult:
+    return DecisionResult(
+        symbol=position.symbol,
+        should_sell=True,
+        can_submit_sell=can_submit_sell,
+        trigger_reason="take_profit_triggered",
+        block_reason=None,
+        current_price=Decimal("10.80"),
+        cost_price=position.cost_price,
+        take_profit_price=Decimal("10.50"),
+        stop_loss_price=Decimal("9.70"),
+        volume=position.volume,
+        available_volume=position.available_volume,
+        sellable_now=True,
+        session_state="trading",
+        evaluated_at=_now(),
+    )
+
+
+def _decision_state(position: PositionSnapshot) -> DecisionPositionStateSnapshot:
+    return DecisionPositionStateSnapshot(
+        symbol=position.symbol,
+        lifecycle_state=DecisionLifecycleState.watching,
+        has_position=True,
+        sellable_now=True,
+        volume=position.volume,
+        available_volume=position.available_volume,
+        first_seen_at=_now(),
+        last_seen_at=_now(),
+        disappeared_at=None,
+        tombstone_rounds=0,
+        last_trigger_reason="take_profit_triggered",
+        last_block_reason=None,
+        last_decision_at=_now(),
+    )
+
+
+def _candidate(position: PositionSnapshot, *, can_submit_sell: bool = True) -> SellCandidate:
+    return SellCandidate(
+        decision=_decision(position, can_submit_sell=can_submit_sell),
+        state_snapshot=_decision_state(position),
+    )
+
+
+def _candidate_round(
+    *,
+    round_no: int = 1,
+    candidates: tuple[SellCandidate, ...],
+) -> CandidateRound:
+    return CandidateRound(
+        summary=CandidateRoundSummary(
+            round_no=round_no,
+            session_state="trading",
+            position_count=len(candidates),
+            watching_count=len(candidates),
+            tombstone_count=0,
+            should_sell_count=sum(1 for item in candidates if item.decision.should_sell),
+            can_submit_sell_count=sum(
+                1 for item in candidates if item.decision.can_submit_sell
+            ),
+            changed_symbol_count=0,
+            duration_ms=1,
+        ),
+        candidates=candidates,
+        tombstones=(),
+        change_events=(
+            DecisionChangeEvent(
+                symbol=candidates[0].decision.symbol,
+                change_tags=("trigger_activated",),
+                decision=candidates[0].decision,
+                state_snapshot=candidates[0].state_snapshot,
+            ),
+        )
+        if candidates
+        else (),
     )
 
 
@@ -98,23 +171,32 @@ class FakeTimer:
         return self._values[-1]
 
 
+class FakeCandidatePipeline:
+    def __init__(self, rounds: list[CandidateRound]) -> None:
+        self._rounds = rounds
+        self.calls = 0
+
+    def run_round(self, *, config: AppConfig, round_no: int) -> CandidateRound:
+        del config, round_no
+        index = min(self.calls, len(self._rounds) - 1)
+        self.calls += 1
+        return self._rounds[index]
+
+
 class SequencedTradeGateway:
     def __init__(
         self,
         *,
-        positions: tuple[PositionSnapshot, ...] | None = None,
-        available_volume: int = 250,
         submit_result: OrderSubmitResult | None = None,
         order_statuses: list[tuple[str, int, int, str | None]] | None = None,
         order_status_event_times: list[datetime] | None = None,
         execution_reports: list[tuple[OrderExecutionSnapshot, ...]] | None = None,
     ) -> None:
-        self.positions = positions or (_position(available_volume=available_volume),)
         self.submit_result = submit_result or OrderSubmitResult(
             accepted=True,
             cl_ord_id="CL_1",
             broker_order_id="BK_1",
-            symbol=self.positions[0].symbol,
+            symbol="SHSE.600036",
             message="accepted",
             raw_status="1",
             event_time=_now(),
@@ -126,9 +208,6 @@ class SequencedTradeGateway:
         self.submitted_requests: list[object] = []
         self.query_order_status_calls = 0
         self._last_query_index = 0
-
-    def get_positions(self, account_id: str) -> list[PositionSnapshot]:
-        return list(self.positions)
 
     def submit_order(self, request):
         self.submit_calls += 1
@@ -161,14 +240,6 @@ class SequencedTradeGateway:
         return self.execution_reports[index]
 
 
-class FakeMarketGateway:
-    def __init__(self, *, quotes: tuple[QuoteSnapshot, ...] | None = None) -> None:
-        self._quotes = quotes or (_quote(),)
-
-    def get_quotes(self, symbols: list[str]) -> list[QuoteSnapshot]:
-        return [quote for quote in self._quotes if quote.symbol in symbols]
-
-
 class CapturingLogger:
     def __init__(self) -> None:
         self.messages: list[str] = []
@@ -188,15 +259,12 @@ class CapturingAuditLogger:
         self.events.append(json.loads(rendered))
 
 
-def test_run_round_uses_real_m2_state_and_writes_decision_feedback() -> None:
-    decision_manager = PositionDecisionStateStore(logging.getLogger("test"))
-    execution_manager = M3PositionStateManager(logger=None)
-    service = M3ExecutionService(
+def test_run_round_consumes_shared_candidate_round() -> None:
+    pipeline = FakeCandidatePipeline(rounds=[_candidate_round(candidates=(_candidate(_position()),))])
+    service = AutoSellService(
         trade_gateway=SequencedTradeGateway(),
-        market_gateway=FakeMarketGateway(),
-        decision_state_manager=decision_manager,
-        execution_state_manager=execution_manager,
-        decision_engine=SellDecisionEngine(),
+        candidate_pipeline=pipeline,
+        execution_state_manager=OrderExecutionStateStore(logger=None),
         logger=logging.getLogger("test"),
         clock=_now,
         timer=FakeTimer([0.0, 0.1, 0.2]),
@@ -205,10 +273,7 @@ def test_run_round_uses_real_m2_state_and_writes_decision_feedback() -> None:
 
     report = service.run_round(config=_config(), round_no=1, reconcile_timeout_seconds=5)
 
-    state = decision_manager.get_state("SHSE.600036")
-    assert state is not None
-    assert state.last_trigger_reason == "take_profit_triggered"
-    assert state.last_block_reason is None
+    assert pipeline.calls == 1
     assert report.execution_details[-1].decision_lifecycle_state == "watching"
     assert report.execution_details[-1].decision_can_submit_sell is True
     assert report.execution_details[-1].execution_state == "filled"
@@ -216,9 +281,9 @@ def test_run_round_uses_real_m2_state_and_writes_decision_feedback() -> None:
 
 def test_run_round_reconciles_new_submit_until_filled_within_shared_budget() -> None:
     sleep_calls: list[float] = []
-    service = M3ExecutionService(
+    candidate = _candidate(_position(volume=250, available_volume=201))
+    service = AutoSellService(
         trade_gateway=SequencedTradeGateway(
-            available_volume=201,
             order_statuses=[
                 ("pending_new", 0, 0, None),
                 ("partially_filled", 100, 100, "BK_1"),
@@ -230,10 +295,8 @@ def test_run_round_reconciles_new_submit_until_filled_within_shared_budget() -> 
                 (_execution(200),),
             ],
         ),
-        market_gateway=FakeMarketGateway(),
-        decision_state_manager=PositionDecisionStateStore(logging.getLogger("test")),
-        execution_state_manager=M3PositionStateManager(logger=None),
-        decision_engine=SellDecisionEngine(),
+        candidate_pipeline=FakeCandidatePipeline(rounds=[_candidate_round(candidates=(candidate,))]),
+        execution_state_manager=OrderExecutionStateStore(logger=None),
         logger=logging.getLogger("test"),
         clock=_now,
         timer=FakeTimer([0.0, 0.1, 0.2, 0.7, 0.8, 1.3, 1.4]),
@@ -255,10 +318,10 @@ def test_run_round_tracks_existing_open_order_without_duplicate_submit() -> None
         order_statuses=[("partially_filled", 100, 100, "BK_1")],
         execution_reports=[(_execution(100),)],
     )
-    execution_manager = M3PositionStateManager(logger=None)
+    execution_manager = OrderExecutionStateStore(logger=None)
     execution_manager.update_state(
         "SHSE.600036",
-        M3ExecutionState.submitted,
+        OrderExecutionState.submitted,
         cl_ord_id="CL_EXIST",
         broker_order_id="BK_1",
         requested_volume=200,
@@ -266,12 +329,10 @@ def test_run_round_tracks_existing_open_order_without_duplicate_submit() -> None
         submit_accepted=True,
         last_order_status="submitted",
     )
-    service = M3ExecutionService(
+    service = AutoSellService(
         trade_gateway=trade_gateway,
-        market_gateway=FakeMarketGateway(),
-        decision_state_manager=PositionDecisionStateStore(logging.getLogger("test")),
+        candidate_pipeline=FakeCandidatePipeline(rounds=[_candidate_round(candidates=(_candidate(_position()),))]),
         execution_state_manager=execution_manager,
-        decision_engine=SellDecisionEngine(),
         logger=logging.getLogger("test"),
         clock=_now,
         timer=FakeTimer([0.0, 0.1, 5.2]),
@@ -287,13 +348,12 @@ def test_run_round_tracks_existing_open_order_without_duplicate_submit() -> None
 
 
 def test_run_round_emits_block_detail_with_decision_projection() -> None:
-    trade_gateway = SequencedTradeGateway(available_volume=201)
-    service = M3ExecutionService(
+    trade_gateway = SequencedTradeGateway()
+    candidate = _candidate(_position(volume=250, available_volume=201))
+    service = AutoSellService(
         trade_gateway=trade_gateway,
-        market_gateway=FakeMarketGateway(),
-        decision_state_manager=PositionDecisionStateStore(logging.getLogger("test")),
-        execution_state_manager=M3PositionStateManager(logger=None),
-        decision_engine=SellDecisionEngine(),
+        candidate_pipeline=FakeCandidatePipeline(rounds=[_candidate_round(candidates=(candidate,))]),
+        execution_state_manager=OrderExecutionStateStore(logger=None),
         logger=logging.getLogger("test"),
         clock=_now,
         timer=FakeTimer([0.0, 0.1]),
@@ -311,16 +371,14 @@ def test_run_round_emits_block_detail_with_decision_projection() -> None:
 
 
 def test_run_round_preserves_submit_broker_order_id_and_remaining_volume_on_bad_snapshot() -> None:
-    service = M3ExecutionService(
+    candidate = _candidate(_position(volume=250, available_volume=201))
+    service = AutoSellService(
         trade_gateway=SequencedTradeGateway(
-            available_volume=201,
             order_statuses=[("pending_new", 0, 0, None)],
             execution_reports=[()],
         ),
-        market_gateway=FakeMarketGateway(),
-        decision_state_manager=PositionDecisionStateStore(logging.getLogger("test")),
-        execution_state_manager=M3PositionStateManager(logger=None),
-        decision_engine=SellDecisionEngine(),
+        candidate_pipeline=FakeCandidatePipeline(rounds=[_candidate_round(candidates=(candidate,))]),
+        execution_state_manager=OrderExecutionStateStore(logger=None),
         logger=logging.getLogger("test"),
         clock=_now,
         timer=FakeTimer([0.0, 0.1, 5.1]),
@@ -336,16 +394,14 @@ def test_run_round_preserves_submit_broker_order_id_and_remaining_volume_on_bad_
 
 def test_run_round_does_not_log_filled_state_with_zero_filled_volume() -> None:
     state_logger = CapturingLogger()
-    service = M3ExecutionService(
+    candidate = _candidate(_position(volume=100, available_volume=100))
+    service = AutoSellService(
         trade_gateway=SequencedTradeGateway(
-            positions=(_position(volume=100, available_volume=100),),
             order_statuses=[("filled", 0, 0, "BK_1")],
             execution_reports=[(_execution(100),)],
         ),
-        market_gateway=FakeMarketGateway(),
-        decision_state_manager=PositionDecisionStateStore(logging.getLogger("test")),
-        execution_state_manager=M3PositionStateManager(logger=state_logger),
-        decision_engine=SellDecisionEngine(),
+        candidate_pipeline=FakeCandidatePipeline(rounds=[_candidate_round(candidates=(candidate,))]),
+        execution_state_manager=OrderExecutionStateStore(logger=state_logger),
         logger=logging.getLogger("test"),
         clock=_now,
         timer=FakeTimer([0.0, 0.1, 0.2]),
@@ -381,7 +437,6 @@ def test_new_submit_clears_previous_order_filled_fields() -> None:
             )
 
     gateway = MultiSubmitGateway(
-        positions=(_position(volume=100, available_volume=100),),
         order_statuses=[
             ("filled", 100, 0, "BK_1"),
             ("pending_new", 0, 0, None),
@@ -391,12 +446,16 @@ def test_new_submit_clears_previous_order_filled_fields() -> None:
             (),
         ],
     )
-    service = M3ExecutionService(
+    candidate = _candidate(_position(volume=100, available_volume=100))
+    service = AutoSellService(
         trade_gateway=gateway,
-        market_gateway=FakeMarketGateway(),
-        decision_state_manager=PositionDecisionStateStore(logging.getLogger("test")),
-        execution_state_manager=M3PositionStateManager(logger=None),
-        decision_engine=SellDecisionEngine(),
+        candidate_pipeline=FakeCandidatePipeline(
+            rounds=[
+                _candidate_round(round_no=1, candidates=(candidate,)),
+                _candidate_round(round_no=2, candidates=(candidate,)),
+            ]
+        ),
+        execution_state_manager=OrderExecutionStateStore(logger=None),
         logger=logging.getLogger("test"),
         clock=_now,
         timer=FakeTimer([0.0, 0.1, 0.2, 1.0, 1.1, 6.2]),
@@ -431,12 +490,10 @@ def test_run_round_emits_terminal_audit_event_with_latency() -> None:
         order_status_event_times=[fill_time],
         execution_reports=[(_execution(200, event_time=fill_time),)],
     )
-    service = M3ExecutionService(
+    service = AutoSellService(
         trade_gateway=trade_gateway,
-        market_gateway=FakeMarketGateway(),
-        decision_state_manager=PositionDecisionStateStore(logging.getLogger("test")),
-        execution_state_manager=M3PositionStateManager(logger=None),
-        decision_engine=SellDecisionEngine(),
+        candidate_pipeline=FakeCandidatePipeline(rounds=[_candidate_round(candidates=(_candidate(_position()),))]),
+        execution_state_manager=OrderExecutionStateStore(logger=None),
         logger=logging.getLogger("test"),
         audit_logger=audit_logger,
         clock=lambda: submit_time,
@@ -459,16 +516,14 @@ def test_run_round_emits_terminal_audit_event_with_latency() -> None:
 
 def test_run_round_emits_reconcile_timeout_without_latency() -> None:
     audit_logger = CapturingAuditLogger()
-    service = M3ExecutionService(
+    candidate = _candidate(_position(volume=250, available_volume=201))
+    service = AutoSellService(
         trade_gateway=SequencedTradeGateway(
-            available_volume=201,
             order_statuses=[("pending_new", 0, 0, "BK_1")],
             execution_reports=[()],
         ),
-        market_gateway=FakeMarketGateway(),
-        decision_state_manager=PositionDecisionStateStore(logging.getLogger("test")),
-        execution_state_manager=M3PositionStateManager(logger=None),
-        decision_engine=SellDecisionEngine(),
+        candidate_pipeline=FakeCandidatePipeline(rounds=[_candidate_round(candidates=(candidate,))]),
+        execution_state_manager=OrderExecutionStateStore(logger=None),
         logger=logging.getLogger("test"),
         audit_logger=audit_logger,
         clock=_now,
@@ -498,12 +553,10 @@ def test_run_round_emits_submit_rejected_audit_event() -> None:
             event_time=_now(),
         ),
     )
-    service = M3ExecutionService(
+    service = AutoSellService(
         trade_gateway=trade_gateway,
-        market_gateway=FakeMarketGateway(),
-        decision_state_manager=PositionDecisionStateStore(logging.getLogger("test")),
-        execution_state_manager=M3PositionStateManager(logger=None),
-        decision_engine=SellDecisionEngine(),
+        candidate_pipeline=FakeCandidatePipeline(rounds=[_candidate_round(candidates=(_candidate(_position()),))]),
+        execution_state_manager=OrderExecutionStateStore(logger=None),
         logger=logging.getLogger("test"),
         audit_logger=audit_logger,
         clock=_now,
@@ -524,7 +577,7 @@ def test_run_round_delays_terminal_audit_until_execution_report_arrives() -> Non
     submit_time = datetime(2026, 4, 13, 10, 0, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
     fill_time = datetime(2026, 4, 13, 10, 0, 1, tzinfo=ZoneInfo("Asia/Shanghai"))
     audit_logger = CapturingAuditLogger()
-    service = M3ExecutionService(
+    service = AutoSellService(
         trade_gateway=SequencedTradeGateway(
             submit_result=OrderSubmitResult(
                 accepted=True,
@@ -545,10 +598,8 @@ def test_run_round_delays_terminal_audit_until_execution_report_arrives() -> Non
                 (_execution(200, event_time=fill_time),),
             ],
         ),
-        market_gateway=FakeMarketGateway(),
-        decision_state_manager=PositionDecisionStateStore(logging.getLogger("test")),
-        execution_state_manager=M3PositionStateManager(logger=None),
-        decision_engine=SellDecisionEngine(),
+        candidate_pipeline=FakeCandidatePipeline(rounds=[_candidate_round(candidates=(_candidate(_position()),))]),
+        execution_state_manager=OrderExecutionStateStore(logger=None),
         logger=logging.getLogger("test"),
         audit_logger=audit_logger,
         clock=lambda: submit_time,
@@ -572,7 +623,7 @@ def test_run_round_uses_reconcile_timeout_when_terminal_audit_is_still_pending()
     submit_time = datetime(2026, 4, 13, 10, 0, 0, tzinfo=ZoneInfo("Asia/Shanghai"))
     fill_time = datetime(2026, 4, 13, 10, 0, 1, tzinfo=ZoneInfo("Asia/Shanghai"))
     audit_logger = CapturingAuditLogger()
-    service = M3ExecutionService(
+    service = AutoSellService(
         trade_gateway=SequencedTradeGateway(
             submit_result=OrderSubmitResult(
                 accepted=True,
@@ -587,10 +638,8 @@ def test_run_round_uses_reconcile_timeout_when_terminal_audit_is_still_pending()
             order_status_event_times=[fill_time],
             execution_reports=[()],
         ),
-        market_gateway=FakeMarketGateway(),
-        decision_state_manager=PositionDecisionStateStore(logging.getLogger("test")),
-        execution_state_manager=M3PositionStateManager(logger=None),
-        decision_engine=SellDecisionEngine(),
+        candidate_pipeline=FakeCandidatePipeline(rounds=[_candidate_round(candidates=(_candidate(_position()),))]),
+        execution_state_manager=OrderExecutionStateStore(logger=None),
         logger=logging.getLogger("test"),
         audit_logger=audit_logger,
         clock=lambda: submit_time,

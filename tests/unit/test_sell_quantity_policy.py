@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from gmtrade_live.services.m3_quantity_rules import build_sell_quantity_plan
+from gmtrade_live.services.sell_quantity_policy import build_sell_quantity_plan
 
 
 def test_build_sell_quantity_plan_promotes_full_position_when_total_remainder_is_odd_lot() -> None:

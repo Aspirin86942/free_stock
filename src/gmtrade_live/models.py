@@ -332,8 +332,8 @@ class SellQuantityPlan:
 
 
 @dataclass(frozen=True, slots=True)
-class M3BlockDetail:
-    """单标的执行前阻断详情。"""
+class SellBlockDetail:
+    """单标的自动卖出执行前阻断详情。"""
 
     symbol: str
     decision_lifecycle_state: str | None
@@ -356,8 +356,8 @@ class M3BlockDetail:
 
 
 @dataclass(frozen=True, slots=True)
-class M3ExecutionDetail:
-    """单标的执行链详情。"""
+class SellExecutionDetail:
+    """单标的自动卖出执行链详情。"""
 
     symbol: str
     change_tags: tuple[str, ...]
@@ -385,8 +385,8 @@ class M3ExecutionDetail:
 
 
 @dataclass(frozen=True, slots=True)
-class M3RoundSummary:
-    """M3 单轮摘要。"""
+class AutoSellRoundSummary:
+    """自动卖出单轮摘要。"""
 
     round_no: int
     session_state: str
@@ -400,9 +400,16 @@ class M3RoundSummary:
 
 
 @dataclass(frozen=True, slots=True)
-class M3RoundReport:
-    """M3 单轮对外稳定输出。"""
+class AutoSellRoundReport:
+    """自动卖出单轮对外稳定输出。"""
 
-    summary: M3RoundSummary
-    block_details: tuple[M3BlockDetail, ...]
-    execution_details: tuple[M3ExecutionDetail, ...]
+    summary: AutoSellRoundSummary
+    block_details: tuple[SellBlockDetail, ...]
+    execution_details: tuple[SellExecutionDetail, ...]
+
+
+# 向后兼容别名：Task 2 切换期间允许旧命名调用方继续工作。
+M3BlockDetail = SellBlockDetail
+M3ExecutionDetail = SellExecutionDetail
+M3RoundSummary = AutoSellRoundSummary
+M3RoundReport = AutoSellRoundReport

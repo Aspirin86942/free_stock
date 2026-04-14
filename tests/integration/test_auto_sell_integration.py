@@ -8,19 +8,22 @@ from zoneinfo import ZoneInfo
 
 from gmtrade_live.config import AppConfig
 from gmtrade_live.models import (
+    CandidateRound,
+    CandidateRoundSummary,
+    DecisionLifecycleState,
+    DecisionPositionStateSnapshot,
+    DecisionResult,
     OrderExecutionSnapshot,
     OrderStatusSnapshot,
     OrderSubmitResult,
     PositionSnapshot,
-    QuoteSnapshot,
+    SellCandidate,
 )
-from gmtrade_live.services.m3_execution_service import M3ExecutionService
-from gmtrade_live.services.m3_state_manager import (
-    M3ExecutionState,
-    M3PositionStateManager,
+from gmtrade_live.services.auto_sell_service import AutoSellService
+from gmtrade_live.services.order_execution_state import (
+    OrderExecutionState,
+    OrderExecutionStateStore,
 )
-from gmtrade_live.services.position_decision_state import PositionDecisionStateStore
-from gmtrade_live.services.sell_decision_engine import SellDecisionEngine
 
 
 def _now() -> datetime:
@@ -54,12 +57,57 @@ def _position(symbol: str = "SZSE.002594") -> PositionSnapshot:
     )
 
 
-def _quote(symbol: str = "SZSE.002594") -> QuoteSnapshot:
-    return QuoteSnapshot(
-        symbol=symbol,
-        last_price=Decimal("10.80"),
-        quote_time=_now(),
-        source="fake",
+def _candidate(position: PositionSnapshot) -> SellCandidate:
+    decision = DecisionResult(
+        symbol=position.symbol,
+        should_sell=True,
+        can_submit_sell=True,
+        trigger_reason="take_profit_triggered",
+        block_reason=None,
+        current_price=Decimal("10.80"),
+        cost_price=position.cost_price,
+        take_profit_price=Decimal("10.50"),
+        stop_loss_price=Decimal("9.70"),
+        volume=position.volume,
+        available_volume=position.available_volume,
+        sellable_now=True,
+        session_state="trading",
+        evaluated_at=_now(),
+    )
+    state_snapshot = DecisionPositionStateSnapshot(
+        symbol=position.symbol,
+        lifecycle_state=DecisionLifecycleState.watching,
+        has_position=True,
+        sellable_now=True,
+        volume=position.volume,
+        available_volume=position.available_volume,
+        first_seen_at=_now(),
+        last_seen_at=_now(),
+        disappeared_at=None,
+        tombstone_rounds=0,
+        last_trigger_reason="take_profit_triggered",
+        last_block_reason=None,
+        last_decision_at=_now(),
+    )
+    return SellCandidate(decision=decision, state_snapshot=state_snapshot)
+
+
+def _candidate_round(round_no: int, candidates: tuple[SellCandidate, ...]) -> CandidateRound:
+    return CandidateRound(
+        summary=CandidateRoundSummary(
+            round_no=round_no,
+            session_state="trading",
+            position_count=len(candidates),
+            watching_count=len(candidates),
+            tombstone_count=0,
+            should_sell_count=len(candidates),
+            can_submit_sell_count=len(candidates),
+            changed_symbol_count=0,
+            duration_ms=1,
+        ),
+        candidates=candidates,
+        tombstones=(),
+        change_events=(),
     )
 
 
@@ -91,23 +139,30 @@ class FakeTimer:
         return self._values[-1]
 
 
+class FakeCandidatePipeline:
+    def __init__(self, rounds: list[CandidateRound]) -> None:
+        self._rounds = rounds
+        self.calls = 0
+
+    def run_round(self, *, config: AppConfig, round_no: int) -> CandidateRound:
+        del config, round_no
+        index = min(self.calls, len(self._rounds) - 1)
+        self.calls += 1
+        return self._rounds[index]
+
+
 class SequencedTradeGateway:
     def __init__(
         self,
         *,
-        positions: tuple[PositionSnapshot, ...] | None = None,
         order_statuses: list[tuple[str, int, int, str | None]] | None = None,
         execution_reports: list[tuple[OrderExecutionSnapshot, ...]] | None = None,
     ) -> None:
-        self.positions = positions or (_position(),)
         self.order_statuses = order_statuses or [("filled", 200, 0, "BK_1")]
         self.execution_reports = execution_reports or [(_execution(200),)]
         self.submit_calls = 0
         self.query_order_status_calls = 0
         self._last_query_index = 0
-
-    def get_positions(self, account_id: str) -> list[PositionSnapshot]:
-        return list(self.positions)
 
     def submit_order(self, request):
         self.submit_calls += 1
@@ -144,13 +199,8 @@ class SequencedTradeGateway:
         return self.execution_reports[index]
 
 
-class FakeMarketGateway:
-    def get_quotes(self, symbols: list[str]) -> list[QuoteSnapshot]:
-        return [_quote(symbol) for symbol in symbols]
-
-
-def test_m3_once_round_keeps_polling_until_budget_exhausted_or_order_finishes() -> None:
-    service = M3ExecutionService(
+def test_auto_sell_once_round_keeps_polling_until_budget_exhausted_or_order_finishes() -> None:
+    service = AutoSellService(
         trade_gateway=SequencedTradeGateway(
             order_statuses=[
                 ("pending_new", 0, 0, "BK_1"),
@@ -163,10 +213,10 @@ def test_m3_once_round_keeps_polling_until_budget_exhausted_or_order_finishes() 
                 (_execution(200),),
             ],
         ),
-        market_gateway=FakeMarketGateway(),
-        decision_state_manager=PositionDecisionStateStore(logging.getLogger("test")),
-        execution_state_manager=M3PositionStateManager(logger=None),
-        decision_engine=SellDecisionEngine(),
+        candidate_pipeline=FakeCandidatePipeline(
+            rounds=[_candidate_round(1, (_candidate(_position()),))]
+        ),
+        execution_state_manager=OrderExecutionStateStore(logger=None),
         logger=logging.getLogger("test"),
         clock=_now,
         timer=FakeTimer([0.0, 0.1, 0.2, 0.7, 0.8, 1.3, 1.4]),
@@ -192,12 +242,16 @@ def test_open_order_continues_in_next_round_after_timeout() -> None:
             (_execution(200),),
         ],
     )
-    service = M3ExecutionService(
+    candidate = _candidate(_position())
+    service = AutoSellService(
         trade_gateway=trade_gateway,
-        market_gateway=FakeMarketGateway(),
-        decision_state_manager=PositionDecisionStateStore(logging.getLogger("test")),
-        execution_state_manager=M3PositionStateManager(logger=None),
-        decision_engine=SellDecisionEngine(),
+        candidate_pipeline=FakeCandidatePipeline(
+            rounds=[
+                _candidate_round(1, (candidate,)),
+                _candidate_round(2, (candidate,)),
+            ]
+        ),
+        execution_state_manager=OrderExecutionStateStore(logger=None),
         logger=logging.getLogger("test"),
         clock=_now,
         timer=FakeTimer([0.0, 0.1, 1.2, 2.0, 2.1, 2.2]),
@@ -215,5 +269,5 @@ def test_open_order_continues_in_next_round_after_timeout() -> None:
     assert trade_gateway.submit_calls == 1
     assert (
         service._execution_state_manager.get_state("SZSE.002594").state
-        is M3ExecutionState.filled
+        is OrderExecutionState.filled
     )
