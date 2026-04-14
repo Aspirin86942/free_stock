@@ -594,6 +594,7 @@ def test_run_m3_execution_prints_latency_fields(monkeypatch, capsys) -> None:
     config = _fake_config()
     audit_loggers: list[object] = []
     service_kwargs_list: list[dict[str, object]] = []
+    sentinel_pipeline = SimpleNamespace(name="candidate-pipeline")
     report = SimpleNamespace(
         summary=SimpleNamespace(
             round_no=1,
@@ -666,6 +667,7 @@ def test_run_m3_execution_prints_latency_fields(monkeypatch, capsys) -> None:
     )
     monkeypatch.setattr(bootstrap, "GMTradeGateway", lambda: FakeGateway())
     monkeypatch.setattr(bootstrap, "GMCurrentQuoteGateway", lambda: FakeGateway())
+    monkeypatch.setattr(bootstrap, "SellCandidatePipeline", lambda **kwargs: sentinel_pipeline)
     monkeypatch.setattr(bootstrap, "OrderExecutionStateStore", lambda logger: SimpleNamespace())
     monkeypatch.setattr(bootstrap, "PositionDecisionStateStore", lambda logger: SimpleNamespace())
     monkeypatch.setattr(bootstrap, "SellDecisionEngine", lambda: SimpleNamespace())
@@ -682,8 +684,9 @@ def test_run_m3_execution_prints_latency_fields(monkeypatch, capsys) -> None:
     assert exit_code == 0
     assert audit_loggers
     assert service_kwargs_list
-    assert "market_gateway" in service_kwargs_list[0]
-    assert "decision_state_manager" in service_kwargs_list[0]
-    assert "decision_engine" in service_kwargs_list[0]
+    assert service_kwargs_list[0]["candidate_pipeline"] is sentinel_pipeline
+    assert "market_gateway" not in service_kwargs_list[0]
+    assert "decision_state_manager" not in service_kwargs_list[0]
+    assert "decision_engine" not in service_kwargs_list[0]
     assert '"order_terminal_latency_ms": 1000' in lines[1]
     assert '"submit_accepted_at": "2026-04-13T10:00:00+08:00"' in lines[1]

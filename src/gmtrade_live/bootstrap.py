@@ -16,12 +16,16 @@ from gmtrade_live.logging_setup import setup_logging, setup_order_audit_logger
 from gmtrade_live.services.m0_connectivity import ConnectivityCheckService
 from gmtrade_live.services.m1_manual_trade import ManualTradeService
 from gmtrade_live.services.decision_observer import DecisionObserverService
-from gmtrade_live.services.m3_execution_service import M3ExecutionService
+from gmtrade_live.services.auto_sell_service import AutoSellService
 from gmtrade_live.services.order_execution_state import OrderExecutionStateStore
 from gmtrade_live.services.position_decision_state import PositionDecisionStateStore
 from gmtrade_live.services.sell_candidate_pipeline import SellCandidatePipeline
 from gmtrade_live.services.sell_decision_engine import SellDecisionEngine
 from gmtrade_live.session import resolve_trading_session
+
+# 兼容 seam：保留可 monkeypatch 的 M3ExecutionService 名称；
+# 默认指向产品语义执行服务，避免主路径直接依赖旧 m3_execution_service 模块。
+M3ExecutionService = AutoSellService
 
 
 def _resolve_current_session_state(config) -> object:
@@ -284,12 +288,18 @@ def run_m3_execution(
     trade_gateway.connect(config)
     market_gateway.connect(config.token)
 
-    service = M3ExecutionService(
+    pipeline = SellCandidatePipeline(
         trade_gateway=trade_gateway,
         market_gateway=market_gateway,
-        decision_state_manager=PositionDecisionStateStore(logger),
-        execution_state_manager=OrderExecutionStateStore(logger),
+        state_store=PositionDecisionStateStore(logger),
         decision_engine=SellDecisionEngine(),
+        logger=logger,
+    )
+
+    service = M3ExecutionService(
+        trade_gateway=trade_gateway,
+        candidate_pipeline=pipeline,
+        execution_state_manager=OrderExecutionStateStore(logger),
         logger=logger,
         audit_logger=audit_logger,
     )

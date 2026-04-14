@@ -143,6 +143,12 @@ def _patch_m2_service(monkeypatch, *, clock, timer: FakeTimer) -> None:
 def _patch_m3_service(monkeypatch, *, clock, timer: FakeTimer, sleep) -> None:
     """替换 M3ExecutionService，稳定 clock/timer/sleep，避免莫名的等待或跳动。"""
 
+    class StablePipeline(bootstrap.SellCandidatePipeline):
+        def __init__(self, *args, **kwargs):
+            kwargs.setdefault("clock", clock)
+            kwargs.setdefault("timer", timer)
+            super().__init__(*args, **kwargs)
+
     class StableM3Service(bootstrap.M3ExecutionService):
         def __init__(self, *args, **kwargs):
             kwargs.setdefault("clock", clock)
@@ -150,6 +156,7 @@ def _patch_m3_service(monkeypatch, *, clock, timer: FakeTimer, sleep) -> None:
             kwargs.setdefault("sleep", sleep)
             super().__init__(*args, **kwargs)
 
+    monkeypatch.setattr(bootstrap, "SellCandidatePipeline", StablePipeline)
     monkeypatch.setattr(bootstrap, "M3ExecutionService", StableM3Service)
 
 
