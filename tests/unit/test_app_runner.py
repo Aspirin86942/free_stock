@@ -7,10 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
-import pytest
-
 import gmtrade_live.app_runner as app_runner
-from gmtrade_live.errors import ServiceError
 
 
 def _fake_config() -> SimpleNamespace:
@@ -26,161 +23,6 @@ def _fake_config() -> SimpleNamespace:
         market_session_mode="a_share",
     )
 
-
-def test_run_m1_manual_trade_prints_verification_passed(
-    monkeypatch,
-    capsys,
-) -> None:
-    config = _fake_config()
-    report = SimpleNamespace(
-        verification_passed=True,
-        side="sell",
-        cl_ord_id="ORDER_1",
-        broker_order_id="BROKER_1",
-        submit_accepted=True,
-        order_status_confirmed=True,
-        execution_status_confirmed=True,
-        last_order_status="filled",
-        rejection_reason=None,
-        filled_volume=100,
-        avg_price=Decimal("10.450"),
-        message="交易状态已确认",
-    )
-
-    class FakeGateway:
-        def __init__(self, account_id: str) -> None:
-            self.account_id = account_id
-
-        def connect(self, loaded_config) -> None:
-            assert loaded_config is config
-
-    service_instance: "FakeService" | None = None
-
-    class FakeService:
-        def __init__(self, **kwargs) -> None:
-            nonlocal service_instance
-            service_instance = self
-            self.last_run_kwargs: dict[str, object] | None = None
-
-        def run(self, **kwargs):
-            self.last_run_kwargs = kwargs
-            return report
-
-    monkeypatch.setattr(app_runner, "load_config", lambda path: config)
-    monkeypatch.setattr(app_runner, "setup_logging", lambda *args, **kwargs: SimpleNamespace())
-    monkeypatch.setattr(app_runner, "GMTradeGateway", FakeGateway)
-    monkeypatch.setattr(app_runner, "ManualTradeService", FakeService)
-
-    exit_code = app_runner.run_m1_manual_trade(
-        config_path=Path("config/sim_account.yaml"),
-        symbol="SHSE.600036",
-        volume=100,
-        price_type="market",
-        price=None,
-        timeout_seconds=60,
-        side="sell",
-    )
-
-    payload = json.loads(capsys.readouterr().out)
-    assert exit_code == 0
-    assert payload["verification_passed"] is True
-    assert set(payload) == {
-        "verification_passed",
-        "side",
-        "cl_ord_id",
-        "broker_order_id",
-        "submit_accepted",
-        "order_status_confirmed",
-        "execution_status_confirmed",
-        "last_order_status",
-        "rejection_reason",
-        "filled_volume",
-        "avg_price",
-        "message",
-    }
-    assert "success" not in payload
-    assert payload["side"] == "sell"
-    assert service_instance is not None
-    assert service_instance.last_run_kwargs is not None
-    assert service_instance.last_run_kwargs["side"] == "sell"
-
-
-def test_run_m1_manual_trade_returns_nonzero_when_verification_failed(
-    monkeypatch,
-    capsys,
-) -> None:
-    config = _fake_config()
-    report = SimpleNamespace(
-        verification_passed=False,
-        side="sell",
-        cl_ord_id="ORDER_1",
-        broker_order_id=None,
-        submit_accepted=True,
-        order_status_confirmed=True,
-        execution_status_confirmed=False,
-        last_order_status="submitted",
-        rejection_reason=None,
-        filled_volume=0,
-        avg_price=None,
-        message="委托状态已确认但尚未到终态: submitted",
-    )
-
-    class FakeGateway:
-        def __init__(self, account_id: str) -> None:
-            self.account_id = account_id
-
-        def connect(self, loaded_config) -> None:
-            assert loaded_config is config
-
-    service_instance: "FakeService" | None = None
-
-    class FakeService:
-        def __init__(self, **kwargs) -> None:
-            nonlocal service_instance
-            service_instance = self
-            self.last_run_kwargs: dict[str, object] | None = None
-
-        def run(self, **kwargs):
-            self.last_run_kwargs = kwargs
-            return report
-
-    monkeypatch.setattr(app_runner, "load_config", lambda path: config)
-    monkeypatch.setattr(app_runner, "setup_logging", lambda *args, **kwargs: SimpleNamespace())
-    monkeypatch.setattr(app_runner, "GMTradeGateway", FakeGateway)
-    monkeypatch.setattr(app_runner, "ManualTradeService", FakeService)
-
-    exit_code = app_runner.run_m1_manual_trade(
-        config_path=Path("config/sim_account.yaml"),
-        symbol="SHSE.600036",
-        volume=100,
-        price_type="market",
-        price=None,
-        timeout_seconds=60,
-        side="sell",
-    )
-
-    payload = json.loads(capsys.readouterr().out)
-    assert exit_code == 1
-    assert payload["verification_passed"] is False
-    assert set(payload) == {
-        "verification_passed",
-        "side",
-        "cl_ord_id",
-        "broker_order_id",
-        "submit_accepted",
-        "order_status_confirmed",
-        "execution_status_confirmed",
-        "last_order_status",
-        "rejection_reason",
-        "filled_volume",
-        "avg_price",
-        "message",
-    }
-    assert payload["message"] == "委托状态已确认但尚未到终态: submitted"
-    assert payload["side"] == "sell"
-    assert service_instance is not None
-    assert service_instance.last_run_kwargs is not None
-    assert service_instance.last_run_kwargs["side"] == "sell"
 
 
 def test_run_decision_observer_prints_summary_and_change_details(monkeypatch, capsys) -> None:
@@ -374,26 +216,6 @@ def test_run_decision_observer_logs_round_started_and_completed(
     assert any("round_started entry=decision_observer round=1" in call for call in logger_calls)
     assert any("round_completed entry=decision_observer round=1 duration_ms=8" in call for call in logger_calls)
 
-
-def test_run_m1_manual_trade_rejects_unimplemented_market_session_mode(monkeypatch) -> None:
-    config = _fake_config()
-    config.market_session_mode = "futures_placeholder"
-
-    monkeypatch.setattr(app_runner, "load_config", lambda path: config)
-    monkeypatch.setattr(app_runner, "setup_logging", lambda *args, **kwargs: SimpleNamespace())
-
-    with pytest.raises(ServiceError) as exc_info:
-        app_runner.run_m1_manual_trade(
-            config_path=Path("config/sim_account.yaml"),
-            symbol="SHSE.600036",
-            volume=100,
-            price_type="market",
-            price=None,
-            timeout_seconds=60,
-            side="sell",
-        )
-
-    assert exc_info.value.code == "session.mode_not_implemented"
 
 
 def test_run_auto_sell_prints_summary_block_and_execution_details(

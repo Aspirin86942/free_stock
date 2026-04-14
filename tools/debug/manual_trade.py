@@ -1,17 +1,21 @@
-"""M1 手工交易验证服务。"""
+"""M1 手工交易调试脚本，仅用于链路验证。"""
 
 from __future__ import annotations
 
-import logging
+import argparse
+import json
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from gmtrade_live.config import AppConfig
+from gmtrade_live.config import AppConfig, load_config
 from gmtrade_live.errors import ServiceError
+from gmtrade_live.gateways.gmtrade_trade_gateway import GMTradeGateway
 from gmtrade_live.gateways.protocols import TradeGateway
+from gmtrade_live.logging_setup import setup_logging
 from gmtrade_live.models import (
     OrderExecutionSnapshot,
     OrderRequest,
@@ -19,6 +23,7 @@ from gmtrade_live.models import (
     OrderSubmitResult,
     TradeReport,
 )
+from gmtrade_live.session import TradingSessionState, resolve_trading_session
 
 _QUERY_INTERVAL_SECONDS = 0.5
 _TERMINAL_ORDER_STATUSES = {
@@ -69,7 +74,7 @@ class ManualTradeService:
         self,
         *,
         trade_gateway: TradeGateway,
-        logger: logging.Logger,
+        logger,
     ) -> None:
         self._trade_gateway = trade_gateway
         self._logger = logger
@@ -233,9 +238,7 @@ class ManualTradeService:
         timezone_name: str,
     ) -> _CollectedEvents:
         """轮询柜台查询，并把查询结果先转成内部事件再更新聚合状态。"""
-        # print(f"  开始轮询，cl_ord_id={submit_result.cl_ord_id}")
         collected = _CollectedEvents(broker_order_id=submit_result.broker_order_id)
-        # print(collected)
 
         while True:
             self._reconcile_trade_state(
@@ -243,7 +246,6 @@ class ManualTradeService:
                 submit_result=submit_result,
                 collected=collected,
             )
-            # print(collected)
             if _is_verification_success(
                 submit_result=submit_result,
                 collected=collected,
@@ -481,6 +483,24 @@ class ManualTradeService:
         return datetime.now(tz=ZoneInfo(timezone_name))
 
 
+def build_manual_trade_payload(report: TradeReport) -> dict[str, object]:
+    """把交易报告转换为 CLI JSON 输出。"""
+    return {
+        "verification_passed": report.verification_passed,
+        "side": report.side,
+        "cl_ord_id": report.cl_ord_id,
+        "broker_order_id": report.broker_order_id,
+        "submit_accepted": report.submit_accepted,
+        "order_status_confirmed": report.order_status_confirmed,
+        "execution_status_confirmed": report.execution_status_confirmed,
+        "last_order_status": report.last_order_status,
+        "rejection_reason": report.rejection_reason,
+        "filled_volume": report.filled_volume,
+        "avg_price": str(report.avg_price) if report.avg_price is not None else None,
+        "message": report.message,
+    }
+
+
 def _resolve_failure_message(collected: _CollectedEvents) -> str:
     """把当前已知状态翻译为更具体的失败说明。"""
     if collected.order_status_confirmed and collected.last_order_status is not None:
@@ -518,3 +538,56 @@ def _is_verification_success(
         return collected.execution_status_confirmed
 
     return False
+
+
+def _resolve_current_session_state(config: AppConfig) -> TradingSessionState:
+    """统一校验市场时段模式；未实现模式应在所有入口一致拦截。"""
+    return resolve_trading_session(
+        datetime.now(tz=ZoneInfo(config.timezone)),
+        timezone_name=config.timezone,
+        market_session_mode=config.market_session_mode,
+    )
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="GMTrade manual trade debug")
+    parser.add_argument("--config", required=True, help="Path to YAML config file")
+    parser.add_argument("--symbol", required=True)
+    parser.add_argument("--volume", type=int, required=True)
+    parser.add_argument("--price-type", required=True)
+    parser.add_argument("--price", type=Decimal)
+    parser.add_argument("--timeout-seconds", type=int, required=True)
+    parser.add_argument("--side", required=True)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    """调试入口：提交委托并等待状态确认。"""
+    args = _build_parser().parse_args(argv)
+    config = load_config(Path(args.config))
+    _resolve_current_session_state(config)
+    logger = setup_logging(config.strategy_name, config.log_dir)
+
+    gateway = GMTradeGateway(account_id=config.account_id)
+    gateway.connect(config)
+
+    service = ManualTradeService(
+        trade_gateway=gateway,
+        logger=logger,
+    )
+    report = service.run(
+        config=config,
+        symbol=args.symbol,
+        volume=args.volume,
+        price_type=args.price_type,
+        price=args.price,
+        timeout_seconds=args.timeout_seconds,
+        side=args.side,
+    )
+
+    print(json.dumps(build_manual_trade_payload(report), ensure_ascii=False))
+    return 0 if report.verification_passed else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
