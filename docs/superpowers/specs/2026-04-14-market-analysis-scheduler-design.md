@@ -151,10 +151,10 @@ trade:
   enabled: false
   account_id: ${GM_ACCOUNT_ID}
   strategy_name: gmtrade-live-auto-sell
-  poll_interval_seconds: 30
-  take_profit_ratio: 1.08
-  stop_loss_ratio: 0.95
-  sell_quantity_ratio: 0.5
+  poll_interval_seconds: 5
+  take_profit_ratio: 0.015
+  stop_loss_ratio: 0.02
+  sell_quantity_ratio: 0.02
   market_session_mode: a_share
 
 market_analysis:
