@@ -518,12 +518,7 @@ def test_run_m3_execution_prints_summary_block_and_execution_details(
     monkeypatch.setattr(bootstrap, "OrderExecutionStateStore", lambda logger: SimpleNamespace())
     monkeypatch.setattr(bootstrap, "PositionDecisionStateStore", lambda logger: SimpleNamespace())
     monkeypatch.setattr(bootstrap, "SellDecisionEngine", lambda: SimpleNamespace())
-    monkeypatch.setattr(
-        bootstrap,
-        "SellCandidatePipeline",
-        lambda **kwargs: SimpleNamespace(**kwargs),
-    )
-    monkeypatch.setattr(bootstrap, "AutoSellService", FakeService)
+    monkeypatch.setattr(bootstrap, "M3ExecutionService", FakeService)
 
     exit_code = bootstrap.run_m3_execution(
         config_path=Path("config/sim_account.yaml"),
@@ -580,12 +575,7 @@ def test_run_m3_execution_returns_nonzero_when_round_raises(
     monkeypatch.setattr(bootstrap, "OrderExecutionStateStore", lambda logger: SimpleNamespace())
     monkeypatch.setattr(bootstrap, "PositionDecisionStateStore", lambda logger: SimpleNamespace())
     monkeypatch.setattr(bootstrap, "SellDecisionEngine", lambda: SimpleNamespace())
-    monkeypatch.setattr(
-        bootstrap,
-        "SellCandidatePipeline",
-        lambda **kwargs: SimpleNamespace(**kwargs),
-    )
-    monkeypatch.setattr(bootstrap, "AutoSellService", FakeService)
+    monkeypatch.setattr(bootstrap, "M3ExecutionService", FakeService)
 
     exit_code = bootstrap.run_m3_execution(
         config_path=Path("config/sim_account.yaml"),
@@ -604,7 +594,6 @@ def test_run_m3_execution_prints_latency_fields(monkeypatch, capsys) -> None:
     config = _fake_config()
     audit_loggers: list[object] = []
     service_kwargs_list: list[dict[str, object]] = []
-    created_pipelines: list[SimpleNamespace] = []
     report = SimpleNamespace(
         summary=SimpleNamespace(
             round_no=1,
@@ -680,12 +669,7 @@ def test_run_m3_execution_prints_latency_fields(monkeypatch, capsys) -> None:
     monkeypatch.setattr(bootstrap, "OrderExecutionStateStore", lambda logger: SimpleNamespace())
     monkeypatch.setattr(bootstrap, "PositionDecisionStateStore", lambda logger: SimpleNamespace())
     monkeypatch.setattr(bootstrap, "SellDecisionEngine", lambda: SimpleNamespace())
-    monkeypatch.setattr(
-        bootstrap,
-        "SellCandidatePipeline",
-        lambda **kwargs: created_pipelines.append(SimpleNamespace(**kwargs)) or created_pipelines[-1],
-    )
-    monkeypatch.setattr(bootstrap, "AutoSellService", FakeService)
+    monkeypatch.setattr(bootstrap, "M3ExecutionService", FakeService)
 
     exit_code = bootstrap.run_m3_execution(
         config_path=Path("config/sim_account.yaml"),
@@ -697,7 +681,9 @@ def test_run_m3_execution_prints_latency_fields(monkeypatch, capsys) -> None:
     lines = [line for line in capsys.readouterr().out.splitlines() if line]
     assert exit_code == 0
     assert audit_loggers
-    assert created_pipelines
-    assert service_kwargs_list[0]["candidate_pipeline"] is created_pipelines[0]
+    assert service_kwargs_list
+    assert "market_gateway" in service_kwargs_list[0]
+    assert "decision_state_manager" in service_kwargs_list[0]
+    assert "decision_engine" in service_kwargs_list[0]
     assert '"order_terminal_latency_ms": 1000' in lines[1]
     assert '"submit_accepted_at": "2026-04-13T10:00:00+08:00"' in lines[1]

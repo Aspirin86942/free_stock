@@ -16,7 +16,7 @@ from gmtrade_live.logging_setup import setup_logging, setup_order_audit_logger
 from gmtrade_live.services.m0_connectivity import ConnectivityCheckService
 from gmtrade_live.services.m1_manual_trade import ManualTradeService
 from gmtrade_live.services.decision_observer import DecisionObserverService
-from gmtrade_live.services.auto_sell_service import AutoSellService
+from gmtrade_live.services.m3_execution_service import M3ExecutionService
 from gmtrade_live.services.order_execution_state import OrderExecutionStateStore
 from gmtrade_live.services.position_decision_state import PositionDecisionStateStore
 from gmtrade_live.services.sell_candidate_pipeline import SellCandidatePipeline
@@ -284,17 +284,12 @@ def run_m3_execution(
     trade_gateway.connect(config)
     market_gateway.connect(config.token)
 
-    pipeline = SellCandidatePipeline(
+    service = M3ExecutionService(
         trade_gateway=trade_gateway,
         market_gateway=market_gateway,
-        state_store=PositionDecisionStateStore(logger),
-        decision_engine=SellDecisionEngine(),
-        logger=logger,
-    )
-    service = AutoSellService(
-        trade_gateway=trade_gateway,
-        candidate_pipeline=pipeline,
+        decision_state_manager=PositionDecisionStateStore(logger),
         execution_state_manager=OrderExecutionStateStore(logger),
+        decision_engine=SellDecisionEngine(),
         logger=logger,
         audit_logger=audit_logger,
     )
