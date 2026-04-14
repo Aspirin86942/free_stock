@@ -240,6 +240,62 @@ class M2RoundReport:
 
 
 @dataclass(frozen=True, slots=True)
+class DecisionRoundSummary:
+    """决策观测单轮摘要（产品语义）。
+
+    说明：为了保持既有行为，这里的字段与 M2RoundSummary 保持一致。
+    """
+
+    round_no: int
+    session_state: str
+    position_count: int
+    watching_count: int
+    tombstone_count: int
+    should_sell_count: int
+    can_submit_sell_count: int
+    changed_symbol_count: int
+    duration_ms: int
+
+
+@dataclass(frozen=True, slots=True)
+class DecisionChangeEvent:
+    """单标的决策变化事件（产品语义）。"""
+
+    symbol: str
+    change_tags: tuple[str, ...]
+    decision: DecisionResult | None
+    state_snapshot: DecisionPositionStateSnapshot | None
+
+
+@dataclass(frozen=True, slots=True)
+class SellCandidate:
+    """候选卖出标的：决策结果 + 状态快照。"""
+
+    decision: DecisionResult
+    state_snapshot: DecisionPositionStateSnapshot
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateRound:
+    """候选卖出标的单轮评估结果（共享管线中间产物）。"""
+
+    summary: DecisionRoundSummary
+    candidates: tuple[SellCandidate, ...]
+    tombstones: tuple[DecisionPositionStateSnapshot, ...]
+    change_events: tuple[DecisionChangeEvent, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class DecisionObservationReport:
+    """决策观测对外输出（dry-run 语义）。"""
+
+    summary: DecisionRoundSummary
+    candidates: tuple[SellCandidate, ...]
+    tombstones: tuple[DecisionPositionStateSnapshot, ...]
+    change_events: tuple[DecisionChangeEvent, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class SellQuantityPlan:
     """单标的卖量规划结果。"""
 

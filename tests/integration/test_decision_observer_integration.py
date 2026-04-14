@@ -8,9 +8,10 @@ from zoneinfo import ZoneInfo
 
 from gmtrade_live.config import AppConfig
 from gmtrade_live.models import PositionSnapshot, QuoteSnapshot
-from gmtrade_live.services.m2_decision_engine import M2DecisionEngine
-from gmtrade_live.services.m2_dry_run import M2DryRunService
-from gmtrade_live.services.m2_state_manager import M2StateManager
+from gmtrade_live.services.decision_observer import DecisionObserverService
+from gmtrade_live.services.position_decision_state import PositionDecisionStateStore
+from gmtrade_live.services.sell_candidate_pipeline import SellCandidatePipeline
+from gmtrade_live.services.sell_decision_engine import SellDecisionEngine
 
 
 def _now() -> datetime:
@@ -72,8 +73,8 @@ def _quote(symbol: str, price: str) -> QuoteSnapshot:
     )
 
 
-def test_m2_dry_run_service_emits_tombstone_on_disappeared_position() -> None:
-    service = M2DryRunService(
+def test_decision_observer_emits_tombstone_on_disappeared_position() -> None:
+    pipeline = SellCandidatePipeline(
         trade_gateway=SequencedTradeGateway(
             [
                 (_position("SHSE.600036", 100),),
@@ -81,11 +82,15 @@ def test_m2_dry_run_service_emits_tombstone_on_disappeared_position() -> None:
             ]
         ),
         market_gateway=SequencedMarketGateway({"SHSE.600036": _quote("SHSE.600036", "10.80")}),
-        state_manager=M2StateManager(logging.getLogger("test")),
-        decision_engine=M2DecisionEngine(),
+        state_store=PositionDecisionStateStore(logging.getLogger("test")),
+        decision_engine=SellDecisionEngine(),
         logger=logging.getLogger("test"),
         clock=_now,
         timer=lambda: 0.0,
+    )
+    service = DecisionObserverService(
+        pipeline=pipeline,
+        logger=logging.getLogger("test"),
     )
 
     service.run_round(config=_config(), round_no=1)
@@ -93,3 +98,4 @@ def test_m2_dry_run_service_emits_tombstone_on_disappeared_position() -> None:
 
     assert second.summary.tombstone_count == 1
     assert second.change_events[0].change_tags == ("entered_tombstone",)
+

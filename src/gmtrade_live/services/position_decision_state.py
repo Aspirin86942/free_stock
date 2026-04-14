@@ -1,4 +1,7 @@
-"""M2 决策态管理。"""
+"""逐标的决策态管理。
+
+这里的“决策态”不是交易执行态，而是决策层为了做变化检测、墓碑保留等审计需求维护的状态。
+"""
 
 from __future__ import annotations
 
@@ -13,8 +16,8 @@ from gmtrade_live.models import (
 )
 
 
-class M2StateManager:
-    """维护 M2 逐标的决策态和一轮墓碑态。"""
+class PositionDecisionStateStore:
+    """维护逐标的决策态和一轮墓碑态。"""
 
     def __init__(self, logger: Logger | None) -> None:
         self._logger = logger
@@ -27,14 +30,17 @@ class M2StateManager:
         now: datetime,
     ) -> tuple[DecisionPositionStateSnapshot, ...]:
         """根据当前持仓集合同步 watching/tombstone 状态。"""
-        # 只保留真正有仓位的持仓
+        # logger 预留给未来的审计与异常分支；当前逻辑无强制日志输出。
+
+        # 只保留真正有仓位的持仓，避免把“空仓行”带入后续决策和变化检测。
         active_positions = tuple(
             position for position in positions if position.volume > 0
         )
         active_symbols = {position.symbol for position in active_positions}
         next_cache: dict[str, DecisionPositionStateSnapshot] = {}
-        # 处理当前还在持仓里的股票，这只股票是新出现的，创建一条 watching 状态；
-        # 这只股票以前就存在，更新成最新 watching 状态
+
+        # 处理当前还在持仓里的股票：
+        # 新出现 -> 创建 watching 状态；已存在 -> 更新为最新 watching 状态。
         for position in active_positions:
             current = self._cache.get(position.symbol)
             if current is None:
@@ -66,7 +72,9 @@ class M2StateManager:
                 disappeared_at=None,
                 tombstone_rounds=0,
             )
-        # 处理当前不再持仓里的股票，这只股票以前就存在，更新成最新 tombstone 状态；
+
+        # 处理当前不再持仓里的股票：
+        # 如果上一轮还不是 tombstone，则本轮进入 tombstone，并只保留一轮用于审计与变化检测。
         for symbol, snapshot in self._cache.items():
             if symbol in active_symbols:
                 continue

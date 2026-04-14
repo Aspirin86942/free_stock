@@ -1,4 +1,4 @@
-"""M2 单标的决策判断。"""
+"""单标的卖出决策判断。"""
 
 from __future__ import annotations
 
@@ -16,8 +16,11 @@ from gmtrade_live.precision import normalize_price
 from gmtrade_live.session import TradingSessionState
 
 
-class M2DecisionEngine:
-    """负责按单标的生成 M2 决策结果。"""
+class SellDecisionEngine:
+    """负责按单标的生成卖出决策结果。
+
+    这里保留现有策略公式不变，只把命名从阶段化(M2)改为产品语义。
+    """
 
     def evaluate(
         self,
@@ -99,3 +102,4 @@ class M2DecisionEngine:
             session_state=session_state.value,
             evaluated_at=now,
         )
+

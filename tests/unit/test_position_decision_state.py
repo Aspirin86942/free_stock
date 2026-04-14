@@ -6,7 +6,7 @@ from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from gmtrade_live.models import DecisionLifecycleState, PositionSnapshot
-from gmtrade_live.services.m2_state_manager import M2StateManager
+from gmtrade_live.services.position_decision_state import PositionDecisionStateStore
 
 
 def _now() -> datetime:
@@ -30,7 +30,7 @@ def _position(
 
 
 def test_sync_positions_creates_watching_state_for_volume_positions() -> None:
-    manager = M2StateManager(logging.getLogger("test"))
+    manager = PositionDecisionStateStore(logging.getLogger("test"))
 
     snapshots = manager.sync_positions(
         positions=(
@@ -46,7 +46,7 @@ def test_sync_positions_creates_watching_state_for_volume_positions() -> None:
 
 
 def test_sync_positions_transitions_to_tombstone_then_removes() -> None:
-    manager = M2StateManager(logging.getLogger("test"))
+    manager = PositionDecisionStateStore(logging.getLogger("test"))
     manager.sync_positions(
         positions=(_position("SHSE.600036", volume=100, available_volume=100),),
         now=_now(),
@@ -62,7 +62,7 @@ def test_sync_positions_transitions_to_tombstone_then_removes() -> None:
 
 
 def test_update_decision_feedback_updates_reason_and_volume() -> None:
-    manager = M2StateManager(logging.getLogger("test"))
+    manager = PositionDecisionStateStore(logging.getLogger("test"))
     manager.sync_positions(
         positions=(_position("SHSE.600036", volume=200, available_volume=0),),
         now=_now(),
@@ -81,3 +81,4 @@ def test_update_decision_feedback_updates_reason_and_volume() -> None:
     assert snapshot.last_trigger_reason == "stop_loss_triggered"
     assert snapshot.last_block_reason == "temporarily_not_closable"
     assert snapshot.sellable_now is False
+

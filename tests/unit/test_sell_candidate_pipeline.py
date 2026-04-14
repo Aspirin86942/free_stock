@@ -8,9 +8,9 @@ from zoneinfo import ZoneInfo
 
 from gmtrade_live.config import AppConfig
 from gmtrade_live.models import PositionSnapshot, QuoteSnapshot
-from gmtrade_live.services.m2_decision_engine import M2DecisionEngine
-from gmtrade_live.services.m2_dry_run import M2DryRunService
-from gmtrade_live.services.m2_state_manager import M2StateManager
+from gmtrade_live.services.position_decision_state import PositionDecisionStateStore
+from gmtrade_live.services.sell_candidate_pipeline import SellCandidatePipeline
+from gmtrade_live.services.sell_decision_engine import SellDecisionEngine
 
 
 def _now() -> datetime:
@@ -79,17 +79,17 @@ def test_run_round_queries_quotes_for_volume_positions_only() -> None:
         )
     )
     market_gateway = FakeMarketGateway((_quote("SHSE.600036", "10.80"),))
-    service = M2DryRunService(
+    pipeline = SellCandidatePipeline(
         trade_gateway=trade_gateway,
         market_gateway=market_gateway,
-        state_manager=M2StateManager(logging.getLogger("test")),
-        decision_engine=M2DecisionEngine(),
+        state_store=PositionDecisionStateStore(logging.getLogger("test")),
+        decision_engine=SellDecisionEngine(),
         logger=logging.getLogger("test"),
         clock=_now,
         timer=lambda: 0.0,
     )
 
-    report = service.run_round(config=_config(), round_no=1)
+    report = pipeline.run_round(config=_config(), round_no=1)
 
     assert market_gateway.last_symbols == ["SHSE.600036"]
     assert report.summary.position_count == 1
@@ -99,18 +99,19 @@ def test_run_round_queries_quotes_for_volume_positions_only() -> None:
 def test_run_round_skips_quote_query_without_positions() -> None:
     trade_gateway = FakeTradeGateway(())
     market_gateway = FakeMarketGateway(())
-    service = M2DryRunService(
+    pipeline = SellCandidatePipeline(
         trade_gateway=trade_gateway,
         market_gateway=market_gateway,
-        state_manager=M2StateManager(logging.getLogger("test")),
-        decision_engine=M2DecisionEngine(),
+        state_store=PositionDecisionStateStore(logging.getLogger("test")),
+        decision_engine=SellDecisionEngine(),
         logger=logging.getLogger("test"),
         clock=_now,
         timer=lambda: 0.0,
     )
 
-    report = service.run_round(config=_config(), round_no=1)
+    report = pipeline.run_round(config=_config(), round_no=1)
 
     assert market_gateway.last_symbols == []
     assert report.summary.position_count == 0
     assert report.summary.changed_symbol_count == 0
+

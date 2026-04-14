@@ -12,7 +12,7 @@ from gmtrade_live.models import (
     PositionSnapshot,
     QuoteSnapshot,
 )
-from gmtrade_live.services.m2_decision_engine import M2DecisionEngine
+from gmtrade_live.services.sell_decision_engine import SellDecisionEngine
 from gmtrade_live.session import TradingSessionState
 
 
@@ -75,7 +75,7 @@ def _quote(symbol: str, price: str) -> QuoteSnapshot:
 
 
 def test_evaluate_take_profit_allows_submit_in_trading_session() -> None:
-    engine = M2DecisionEngine()
+    engine = SellDecisionEngine()
 
     result = engine.evaluate(
         position=_position("SHSE.600036"),
@@ -93,7 +93,7 @@ def test_evaluate_take_profit_allows_submit_in_trading_session() -> None:
 
 
 def test_evaluate_stop_loss_blocks_when_not_sellable() -> None:
-    engine = M2DecisionEngine()
+    engine = SellDecisionEngine()
 
     result = engine.evaluate(
         position=_position("SHSE.600036", available_volume=0),
@@ -111,7 +111,7 @@ def test_evaluate_stop_loss_blocks_when_not_sellable() -> None:
 
 
 def test_evaluate_returns_quote_missing_when_quote_is_none() -> None:
-    engine = M2DecisionEngine()
+    engine = SellDecisionEngine()
 
     result = engine.evaluate(
         position=_position("SHSE.600036"),
@@ -126,3 +126,4 @@ def test_evaluate_returns_quote_missing_when_quote_is_none() -> None:
     assert result.can_submit_sell is False
     assert result.trigger_reason is None
     assert result.block_reason == "quote_missing"
+

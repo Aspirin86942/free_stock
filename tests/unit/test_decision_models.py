@@ -5,13 +5,14 @@ from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from gmtrade_live.models import (
+    CandidateRound,
+    DecisionChangeEvent,
     DecisionLifecycleState,
+    DecisionObservationReport,
     DecisionPositionStateSnapshot,
     DecisionResult,
-    EvaluatedSymbol,
-    M2ChangeEvent,
-    M2RoundReport,
-    M2RoundSummary,
+    DecisionRoundSummary,
+    SellCandidate,
 )
 
 
@@ -65,7 +66,7 @@ def test_decision_position_state_snapshot_supports_tombstone() -> None:
     assert snapshot.tombstone_rounds == 1
 
 
-def test_m2_round_report_contains_summary_and_change_events() -> None:
+def test_decision_observation_report_contains_summary_and_change_events() -> None:
     decision = DecisionResult(
         symbol="SHSE.600036",
         should_sell=True,
@@ -97,8 +98,8 @@ def test_m2_round_report_contains_summary_and_change_events() -> None:
         last_block_reason=None,
         last_decision_at=_now(),
     )
-    report = M2RoundReport(
-        summary=M2RoundSummary(
+    candidate_round = CandidateRound(
+        summary=DecisionRoundSummary(
             round_no=1,
             session_state="trading",
             position_count=1,
@@ -109,10 +110,10 @@ def test_m2_round_report_contains_summary_and_change_events() -> None:
             changed_symbol_count=1,
             duration_ms=12,
         ),
-        evaluated_symbols=(EvaluatedSymbol(decision=decision, state_snapshot=state_snapshot),),
+        candidates=(SellCandidate(decision=decision, state_snapshot=state_snapshot),),
         tombstones=(),
         change_events=(
-            M2ChangeEvent(
+            DecisionChangeEvent(
                 symbol="SHSE.600036",
                 change_tags=("trigger_activated", "submit_permission_granted"),
                 decision=decision,
@@ -120,9 +121,16 @@ def test_m2_round_report_contains_summary_and_change_events() -> None:
             ),
         ),
     )
+    report = DecisionObservationReport(
+        summary=candidate_round.summary,
+        candidates=candidate_round.candidates,
+        tombstones=candidate_round.tombstones,
+        change_events=candidate_round.change_events,
+    )
 
     assert report.summary.round_no == 1
     assert report.change_events[0].change_tags == (
         "trigger_activated",
         "submit_permission_granted",
     )
+
