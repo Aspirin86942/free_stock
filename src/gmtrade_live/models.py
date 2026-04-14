@@ -43,7 +43,7 @@ class QuoteSnapshot:
 
 @dataclass(frozen=True, slots=True)
 class ConnectivityReport:
-    """M0 连通性检查结果。"""
+    """连通性检查结果。"""
 
     account_id: str
     session_state: str
@@ -54,7 +54,7 @@ class ConnectivityReport:
 
 @dataclass(frozen=True, slots=True)
 class OrderRequest:
-    """M1 手工交易请求。"""
+    """手工交易请求。"""
 
     symbol: str
     volume: int
@@ -128,7 +128,7 @@ class OrderExecutionSnapshot:
 
 @dataclass(frozen=True, slots=True)
 class TradeReport:
-    """M1 验证报告。"""
+    """手工交易验证报告。"""
 
     account_id: str
     side: str
@@ -151,7 +151,7 @@ class TradeReport:
 
 
 class DecisionLifecycleState(str, Enum):
-    """M2 决策态生命周期。"""
+    """决策态生命周期。"""
 
     watching = "watching"
     tombstone = "tombstone"
@@ -159,7 +159,7 @@ class DecisionLifecycleState(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class DecisionResult:
-    """M2 单标的决策结果。"""
+    """单标的决策结果。"""
 
     symbol: str
     should_sell: bool
@@ -179,7 +179,7 @@ class DecisionResult:
 
 @dataclass(frozen=True, slots=True)
 class DecisionPositionStateSnapshot:
-    """M2 决策态快照。"""
+    """决策态快照。"""
 
     symbol: str
     lifecycle_state: DecisionLifecycleState
@@ -198,52 +198,17 @@ class DecisionPositionStateSnapshot:
 
 @dataclass(frozen=True, slots=True)
 class EvaluatedSymbol:
-    """M2 单标的评估结果与状态快照。"""
+    """单标的评估结果与状态快照。"""
 
     decision: DecisionResult
     state_snapshot: DecisionPositionStateSnapshot
 
 
 @dataclass(frozen=True, slots=True)
-class M2RoundSummary:
-    """M2 单轮摘要。"""
-
-    round_no: int
-    session_state: str
-    position_count: int
-    watching_count: int
-    tombstone_count: int
-    should_sell_count: int
-    can_submit_sell_count: int
-    changed_symbol_count: int
-    duration_ms: int
-
-
-@dataclass(frozen=True, slots=True)
-class M2ChangeEvent:
-    """M2 单标的变化事件。"""
-
-    symbol: str
-    change_tags: tuple[str, ...]
-    decision: DecisionResult | None
-    state_snapshot: DecisionPositionStateSnapshot | None
-
-
-@dataclass(frozen=True, slots=True)
-class M2RoundReport:
-    """M2 单轮输出。"""
-
-    summary: M2RoundSummary
-    evaluated_symbols: tuple[EvaluatedSymbol, ...]
-    tombstones: tuple[DecisionPositionStateSnapshot, ...]
-    change_events: tuple[M2ChangeEvent, ...]
-
-
-@dataclass(frozen=True, slots=True)
 class DecisionRoundSummary:
     """决策观测单轮摘要（产品语义）。
 
-    说明：为了保持既有行为，这里的字段与 M2RoundSummary 保持一致。
+    说明：为了保持既有行为，这里的字段与历史观测摘要保持一致。
     """
 
     round_no: int
@@ -309,7 +274,7 @@ class CandidateRound:
 
 @dataclass(frozen=True, slots=True)
 class DecisionObservationReport:
-    """决策观测对外输出（dry-run 语义）。"""
+    """决策观测对外输出。"""
 
     summary: DecisionRoundSummary
     candidates: tuple[SellCandidate, ...]
@@ -406,10 +371,3 @@ class AutoSellRoundReport:
     summary: AutoSellRoundSummary
     block_details: tuple[SellBlockDetail, ...]
     execution_details: tuple[SellExecutionDetail, ...]
-
-
-# 向后兼容别名：Task 2 切换期间允许旧命名调用方继续工作。
-M3BlockDetail = SellBlockDetail
-M3ExecutionDetail = SellExecutionDetail
-M3RoundSummary = AutoSellRoundSummary
-M3RoundReport = AutoSellRoundReport

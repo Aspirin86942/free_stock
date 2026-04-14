@@ -22,7 +22,7 @@ def _config() -> AppConfig:
     return AppConfig(
         account_id="demo-account",
         token="demo-token",
-        strategy_name="gmtrade-live-m2",
+        strategy_name="gmtrade-live-decision-observer",
         poll_interval_seconds=5,
         take_profit_ratio=Decimal("0.05"),
         stop_loss_ratio=Decimal("0.03"),
@@ -98,4 +98,3 @@ def test_decision_observer_emits_tombstone_on_disappeared_position() -> None:
 
     assert second.summary.tombstone_count == 1
     assert second.change_events[0].change_tags == ("entered_tombstone",)
-

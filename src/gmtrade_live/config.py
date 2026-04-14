@@ -147,7 +147,7 @@ def _parse_market_session_mode(value: Any, field_name: str) -> str:
 
 
 def _parse_sell_quantity_ratio(value: Any, field_name: str) -> Decimal:
-    """解析 M3 每轮卖出比例，并把范围限制收口在配置层。"""
+    """解析每轮自动卖出比例，并把范围限制收口在配置层。"""
     result = _parse_decimal(value, field_name)
     if result > Decimal("1"):
         _raise(

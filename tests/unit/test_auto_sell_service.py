@@ -23,7 +23,6 @@ from gmtrade_live.models import (
     SellCandidate,
 )
 from gmtrade_live.services.auto_sell_service import AutoSellService
-from gmtrade_live.services.m3_execution_service import M3ExecutionService
 from gmtrade_live.services.order_execution_state import (
     OrderExecutionState,
     OrderExecutionStateStore,
@@ -279,20 +278,6 @@ def test_run_round_consumes_shared_candidate_round() -> None:
     assert report.execution_details[-1].decision_lifecycle_state == "watching"
     assert report.execution_details[-1].decision_can_submit_sell is True
     assert report.execution_details[-1].execution_state == "filled"
-
-
-def test_m3_execution_service_compat_accepts_legacy_constructor_arguments() -> None:
-    service = M3ExecutionService(
-        trade_gateway=SimpleNamespace(),
-        market_gateway=SimpleNamespace(),
-        decision_state_manager=SimpleNamespace(),
-        execution_state_manager=SimpleNamespace(),
-        decision_engine=SimpleNamespace(),
-        logger=SimpleNamespace(),
-    )
-
-    assert isinstance(service, AutoSellService)
-
 
 def test_run_round_reconciles_new_submit_until_filled_within_shared_budget() -> None:
     sleep_calls: list[float] = []

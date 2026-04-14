@@ -141,7 +141,7 @@ def _patch_decision_service(monkeypatch, *, clock, timer: FakeTimer) -> None:
 
 
 def _patch_auto_sell_service(monkeypatch, *, clock, timer: FakeTimer, sleep) -> None:
-    """替换 M3ExecutionService，稳定 clock/timer/sleep，避免莫名的等待或跳动。"""
+    """替换 AutoSellService，稳定 clock/timer/sleep，避免莫名的等待或跳动。"""
 
     class StablePipeline(app_runner.SellCandidatePipeline):
         def __init__(self, *args, **kwargs):
@@ -149,7 +149,7 @@ def _patch_auto_sell_service(monkeypatch, *, clock, timer: FakeTimer, sleep) -> 
             kwargs.setdefault("timer", timer)
             super().__init__(*args, **kwargs)
 
-    class StableM3Service(app_runner.M3ExecutionService):
+    class StableAutoSellService(app_runner.AutoSellService):
         def __init__(self, *args, **kwargs):
             kwargs.setdefault("clock", clock)
             kwargs.setdefault("timer", timer)
@@ -157,7 +157,7 @@ def _patch_auto_sell_service(monkeypatch, *, clock, timer: FakeTimer, sleep) -> 
             super().__init__(*args, **kwargs)
 
     monkeypatch.setattr(app_runner, "SellCandidatePipeline", StablePipeline)
-    monkeypatch.setattr(app_runner, "M3ExecutionService", StableM3Service)
+    monkeypatch.setattr(app_runner, "AutoSellService", StableAutoSellService)
 
 
 def _patch_sess_state(monkeypatch) -> None:

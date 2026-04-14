@@ -19,7 +19,7 @@ from gmtrade_live.session import TradingSessionState
 class SellDecisionEngine:
     """负责按单标的生成卖出决策结果。
 
-    这里保留现有策略公式不变，只把命名从阶段化(M2)改为产品语义。
+    这里保留现有策略公式不变，只把命名收敛为产品语义。
     """
 
     def evaluate(
@@ -102,4 +102,3 @@ class SellDecisionEngine:
             session_state=session_state.value,
             evaluated_at=now,
         )
-

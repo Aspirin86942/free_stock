@@ -58,7 +58,7 @@ def _build_config() -> AppConfig:
     return AppConfig(
         account_id="demo-account",
         token="demo-token",
-        strategy_name="gmtrade-live-m1",
+        strategy_name="gmtrade-live-auto-sell",
         poll_interval_seconds=5,
         take_profit_ratio=Decimal("0.05"),
         stop_loss_ratio=Decimal("0.03"),

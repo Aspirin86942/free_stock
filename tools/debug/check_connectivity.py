@@ -1,4 +1,4 @@
-"""M0 连通性调试脚本，仅用于排障验证。"""
+"""连通性调试脚本，仅用于排障验证。"""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from gmtrade_live.session import TradingSessionState, resolve_trading_session
 
 
 def build_connectivity_summary(report: ConnectivityReport) -> dict[str, object]:
-    """生成 M0 JSON 摘要。"""
+    """生成连通性 JSON 摘要。"""
     return {
         "account_id": report.account_id,
         "session_state": report.session_state,
@@ -36,18 +36,18 @@ def run_connectivity_check(
     market_gateway: MarketGateway,
     logger,
 ) -> ConnectivityReport:
-    """执行一次 M0 连通性检查并返回报告。"""
+    """执行一次连通性检查并返回报告。"""
     trade_gateway.connect(config)
     market_gateway.connect(config.token)
 
     cash = trade_gateway.get_cash(config.account_id)
     positions = trade_gateway.get_positions(config.account_id)
-    # M0 只验证当前可卖持仓的行情连通性，避免把不可卖仓位也混入行情检查结果。
+    # 这里只验证当前可卖持仓的行情连通性，避免把不可卖仓位也混入行情检查结果。
     symbols = [item.symbol for item in positions if item.available_volume > 0]
     quotes = market_gateway.get_quotes(symbols)
 
     logger.info(
-        "m0_connectivity_success account_id=%s session_state=%s positions=%s quotes=%s",
+        "debug_connectivity_success account_id=%s session_state=%s positions=%s quotes=%s",
         config.account_id,
         session_state.value,
         len(positions),
@@ -84,7 +84,7 @@ def main(argv: list[str] | None = None) -> int:
     config = load_config(Path(args.config))
     logger = setup_logging(config.strategy_name, config.log_dir)
 
-    logger.info("debug_m0_connectivity_starting config=%s", args.config)
+    logger.info("debug_connectivity_starting config=%s", args.config)
 
     session_state = _resolve_current_session_state(config)
     report = run_connectivity_check(

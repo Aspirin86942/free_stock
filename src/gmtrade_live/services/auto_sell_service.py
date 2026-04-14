@@ -114,7 +114,7 @@ class AutoSellService:
         )
         payload = {
             "event_type": event_type,
-            "mode": "m3",
+            "entry": "auto_sell",
             "round_no": round_no,
             "account_id": account_id,
             "symbol": symbol,
@@ -178,7 +178,7 @@ class AutoSellService:
                 sell_quantity_ratio=config.sell_quantity_ratio,
             )
             self._logger.info(
-                "m3_quantity_evaluated symbol=%s raw_target_volume=%s final_target_volume=%s block_reason=%s",
+                "sell_quantity_evaluated symbol=%s raw_target_volume=%s final_target_volume=%s block_reason=%s",
                 symbol,
                 quantity_plan.raw_target_volume,
                 quantity_plan.final_target_volume,
@@ -776,11 +776,6 @@ def _should_wait_for_terminal_audit(snapshot: OrderExecutionStateSnapshot) -> bo
         and snapshot.avg_price is None
     )
 
-
-# 向后兼容别名：保留旧 M3 命名，避免未迁移调用方中断。
-M3ExecutionService = AutoSellService
-
 __all__ = [
     "AutoSellService",
-    "M3ExecutionService",
 ]

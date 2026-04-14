@@ -125,17 +125,8 @@ class OrderExecutionStateStore:
             OrderExecutionState.partially_filled,
         )
 
-
-# 向后兼容别名：保留旧 M3 命名，避免未迁移调用方中断。
-M3ExecutionState = OrderExecutionState
-M3ExecutionStateSnapshot = OrderExecutionStateSnapshot
-M3PositionStateManager = OrderExecutionStateStore
-
 __all__ = [
     "OrderExecutionState",
     "OrderExecutionStateSnapshot",
     "OrderExecutionStateStore",
-    "M3ExecutionState",
-    "M3ExecutionStateSnapshot",
-    "M3PositionStateManager",
 ]

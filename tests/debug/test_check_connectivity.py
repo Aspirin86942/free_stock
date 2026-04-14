@@ -145,7 +145,7 @@ def test_run_connectivity_check_calls_gateways_and_filters_symbols() -> None:
     config = AppConfig(
         account_id="demo-account",
         token="demo-token",
-        strategy_name="gmtrade-live-m0",
+        strategy_name="gmtrade-live-auto-sell",
         poll_interval_seconds=5,
         take_profit_ratio=Decimal("0.05"),
         stop_loss_ratio=Decimal("0.03"),

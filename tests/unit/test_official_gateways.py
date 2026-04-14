@@ -174,7 +174,7 @@ def _build_config() -> AppConfig:
     return AppConfig(
         account_id="demo-account",
         token="demo-token",
-        strategy_name="gmtrade-live-m0",
+        strategy_name="gmtrade-live-auto-sell",
         poll_interval_seconds=5,
         take_profit_ratio=Decimal("0.05"),
         stop_loss_ratio=Decimal("0.03"),
@@ -295,7 +295,7 @@ def test_gm_api_gateway_submits_order_via_query_driven_path() -> None:
 
     assert api.token == "demo-token"
     assert api.serv_addr == "api.myquant.cn:9000"
-    # connect() 不应在 M0/M1 查询链路里全局绑定账户，否则会把 gm SDK 全局状态带进后续调用。
+    # 查询链路不应在 connect() 时全局绑定账户，否则会把 gm SDK 全局状态带进后续调用。
     assert api.account_id is None
     assert api.last_order_kwargs is not None
     assert api.last_order_kwargs["symbol"] == "SHSE.600036"

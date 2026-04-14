@@ -21,67 +21,6 @@ from gmtrade_live.services.sell_decision_engine import SellDecisionEngine
 from gmtrade_live.session import resolve_trading_session
 
 
-class M3ExecutionService(AutoSellService):
-    """app_runner 本地兼容 seam。
-
-    目标：
-    - 主路径使用产品语义参数（candidate_pipeline）实例化；
-    - 仍兼容旧参数（market_gateway/decision_state_manager/decision_engine）。
-    """
-
-    def __init__(
-        self,
-        *,
-        trade_gateway,
-        execution_state_manager,
-        logger,
-        audit_logger=None,
-        candidate_pipeline=None,
-        market_gateway=None,
-        decision_state_manager=None,
-        decision_engine=None,
-        clock=None,
-        timer=None,
-        sleep=None,
-    ) -> None:
-        resolved_pipeline = candidate_pipeline
-        if resolved_pipeline is None:
-            missing: list[str] = []
-            if market_gateway is None:
-                missing.append("market_gateway")
-            if decision_state_manager is None:
-                missing.append("decision_state_manager")
-            if decision_engine is None:
-                missing.append("decision_engine")
-            if missing:
-                missing_text = ", ".join(missing)
-                raise TypeError(
-                    "M3ExecutionService missing required arguments for compatibility path: "
-                    f"{missing_text}"
-                )
-            # 旧参数也要进入共享候选结果执行链，不能退回旧实现。
-            resolved_pipeline = SellCandidatePipeline(
-                trade_gateway=trade_gateway,
-                market_gateway=market_gateway,
-                state_store=decision_state_manager,
-                decision_engine=decision_engine,
-                logger=logger,
-                clock=clock,
-                timer=timer,
-            )
-
-        super().__init__(
-            trade_gateway=trade_gateway,
-            candidate_pipeline=resolved_pipeline,
-            execution_state_manager=execution_state_manager,
-            logger=logger,
-            audit_logger=audit_logger,
-            clock=clock,
-            timer=timer,
-            sleep=sleep,
-        )
-
-
 def _resolve_current_session_state(config) -> object:
     """统一校验市场时段模式；未实现模式应在所有入口一致拦截。"""
     return resolve_trading_session(
@@ -256,7 +195,7 @@ def run_auto_sell(
         logger=logger,
     )
 
-    service = M3ExecutionService(
+    service = AutoSellService(
         trade_gateway=trade_gateway,
         candidate_pipeline=pipeline,
         execution_state_manager=OrderExecutionStateStore(logger),
@@ -280,7 +219,7 @@ def run_auto_sell(
                 reconcile_timeout_seconds=reconcile_timeout_seconds,
             )
         except Exception as exc:
-            # M3 是真实执行链路，单轮异常直接中止，避免在不确定状态下继续发单。
+            # 自动卖出是真实执行链路，单轮异常直接中止，避免在不确定状态下继续发单。
             logger.error(
                 "round_failed entry=auto_sell round=%s error_type=%s retryable=%s error=%s",
                 round_no,

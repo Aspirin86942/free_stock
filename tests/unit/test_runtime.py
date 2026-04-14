@@ -10,14 +10,14 @@ from gmtrade_live.session import TradingSessionState, resolve_trading_session
 
 
 def test_setup_logging_creates_runtime_log_file(tmp_path: Path) -> None:
-    logger = setup_logging("gmtrade-live-m0", tmp_path)
-    logger.info("hello m0")
+    logger = setup_logging("gmtrade-live-auto-sell", tmp_path)
+    logger.info("hello runtime")
 
     assert (tmp_path / "runtime.log").exists()
 
 
 def test_setup_order_audit_logger_creates_order_audit_log_file(tmp_path: Path) -> None:
-    logger = setup_order_audit_logger("gmtrade-live-m4", tmp_path)
+    logger = setup_order_audit_logger("gmtrade-live-auto-sell", tmp_path)
     logger.info('{"event":"audit"}')
     for handler in logger.handlers:
         handler.flush()
@@ -28,10 +28,10 @@ def test_setup_order_audit_logger_creates_order_audit_log_file(tmp_path: Path) -
 
 
 def test_setup_order_audit_logger_keeps_single_handler_on_reinit(tmp_path: Path) -> None:
-    logger_initial = setup_order_audit_logger("gmtrade-live-m4", tmp_path)
+    logger_initial = setup_order_audit_logger("gmtrade-live-auto-sell", tmp_path)
     logger_initial.info('{"event":"first"}')
     handler_before = logger_initial.handlers[0]
-    logger_after = setup_order_audit_logger("gmtrade-live-m4", tmp_path)
+    logger_after = setup_order_audit_logger("gmtrade-live-auto-sell", tmp_path)
     assert len(logger_after.handlers) == 1
     assert logger_after.handlers[0] is not handler_before
     stream = handler_before.stream

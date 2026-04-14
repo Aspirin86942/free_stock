@@ -84,12 +84,12 @@ def test_parse_cli_args_rejects_mode_argument(capsys: pytest.CaptureFixture[str]
                 "--config",
                 "config/sim_account.yaml",
                 "--mode",
-                "m3",
+                "legacy",
             ]
         )
 
     captured = capsys.readouterr()
-    assert "unrecognized arguments: --mode m3" in captured.err
+    assert "unrecognized arguments: --mode legacy" in captured.err
 
 
 def test_parse_cli_args_accepts_reconcile_timeout_seconds() -> None:

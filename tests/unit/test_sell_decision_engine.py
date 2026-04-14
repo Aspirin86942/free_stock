@@ -24,7 +24,7 @@ def _config() -> AppConfig:
     return AppConfig(
         account_id="demo-account",
         token="demo-token",
-        strategy_name="gmtrade-live-m2",
+        strategy_name="gmtrade-live-auto-sell",
         poll_interval_seconds=5,
         take_profit_ratio=Decimal("0.05"),
         stop_loss_ratio=Decimal("0.03"),
@@ -126,4 +126,3 @@ def test_evaluate_returns_quote_missing_when_quote_is_none() -> None:
     assert result.can_submit_sell is False
     assert result.trigger_reason is None
     assert result.block_reason == "quote_missing"
-

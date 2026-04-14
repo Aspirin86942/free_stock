@@ -1,4 +1,4 @@
-"""M1 手工交易调试脚本，仅用于链路验证。"""
+"""手工交易调试脚本，仅用于链路验证。"""
 
 from __future__ import annotations
 
@@ -68,7 +68,7 @@ class _CollectedEvents:
 
 
 class ManualTradeService:
-    """负责一次 M1 手工交易验证的完整收口。"""
+    """负责一次手工交易验证的完整收口。"""
 
     def __init__(
         self,
@@ -101,7 +101,7 @@ class ManualTradeService:
         )
         started_at = self._now(config.timezone)
         self._logger.info(
-            "m1_manual_trade_starting account_id=%s side=%s symbol=%s volume=%s price_type=%s timeout_seconds=%s",
+            "debug_manual_trade_starting account_id=%s side=%s symbol=%s volume=%s price_type=%s timeout_seconds=%s",
             config.account_id,
             side,
             symbol,
@@ -130,7 +130,7 @@ class ManualTradeService:
             submit_result = self._trade_gateway.submit_order(request)
         except Exception as exc:
             self._logger.error(
-                "m1_manual_trade_failed account_id=%s side=%s symbol=%s reason=%s",
+                "debug_manual_trade_failed account_id=%s side=%s symbol=%s reason=%s",
                 config.account_id,
                 side,
                 symbol,
@@ -157,7 +157,7 @@ class ManualTradeService:
         )
         if not submit_result.accepted or submit_result.cl_ord_id is None:
             self._logger.error(
-                "m1_manual_trade_failed account_id=%s side=%s symbol=%s reason=%s",
+                "debug_manual_trade_failed account_id=%s side=%s symbol=%s reason=%s",
                 config.account_id,
                 side,
                 symbol,
@@ -189,7 +189,7 @@ class ManualTradeService:
 
         if verification_passed:
             self._logger.info(
-                "m1_manual_trade_query_closed account_id=%s cl_ord_id=%s last_order_status=%s filled_volume=%s",
+                "debug_manual_trade_query_closed account_id=%s cl_ord_id=%s last_order_status=%s filled_volume=%s",
                 config.account_id,
                 submit_result.cl_ord_id,
                 collected.last_order_status,
@@ -213,7 +213,7 @@ class ManualTradeService:
             else self._logger.error
         )
         log_method(
-            "m1_manual_trade_timeout account_id=%s cl_ord_id=%s message=%s",
+            "debug_manual_trade_timeout account_id=%s cl_ord_id=%s message=%s",
             config.account_id,
             submit_result.cl_ord_id,
             message,
@@ -429,7 +429,7 @@ class ManualTradeService:
         price: Decimal | None,
         timeout_seconds: int,
     ) -> None:
-        """校验 M1 请求参数，避免把非法请求送到柜台。"""
+        """校验手工交易请求参数，避免把非法请求送到柜台。"""
         if side not in {"buy", "sell"}:
             raise ServiceError(
                 code="manual_trade.invalid_side",
@@ -529,7 +529,7 @@ def _is_verification_success(
     if not collected.order_status_confirmed or collected.last_order_status is None:
         return False
 
-    # 以查询结果为准收口 M1：拒单、撤单、过期等终态不再要求成交明细。
+    # 以查询结果为准收口手工交易：拒单、撤单、过期等终态不再要求成交明细。
     if collected.last_order_status in _TERMINAL_ORDER_STATUSES:
         return True
 

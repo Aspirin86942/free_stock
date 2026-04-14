@@ -1,4 +1,4 @@
-"""兼容层：M3 命名迁移到产品语义卖量策略。"""
+"""卖量策略兼容入口，统一导向产品语义实现。"""
 
 from gmtrade_live.services.sell_quantity_policy import build_sell_quantity_plan
 

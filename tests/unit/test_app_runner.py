@@ -346,7 +346,7 @@ def test_run_auto_sell_prints_summary_block_and_execution_details(
     monkeypatch.setattr(app_runner, "OrderExecutionStateStore", lambda logger: SimpleNamespace())
     monkeypatch.setattr(app_runner, "PositionDecisionStateStore", lambda logger: SimpleNamespace())
     monkeypatch.setattr(app_runner, "SellDecisionEngine", lambda: SimpleNamespace())
-    monkeypatch.setattr(app_runner, "M3ExecutionService", FakeService)
+    monkeypatch.setattr(app_runner, "AutoSellService", FakeService)
 
     exit_code = app_runner.run_auto_sell(
         config_path=Path("config/sim_account.yaml"),
@@ -403,7 +403,7 @@ def test_run_auto_sell_returns_nonzero_when_round_raises(
     monkeypatch.setattr(app_runner, "OrderExecutionStateStore", lambda logger: SimpleNamespace())
     monkeypatch.setattr(app_runner, "PositionDecisionStateStore", lambda logger: SimpleNamespace())
     monkeypatch.setattr(app_runner, "SellDecisionEngine", lambda: SimpleNamespace())
-    monkeypatch.setattr(app_runner, "M3ExecutionService", FakeService)
+    monkeypatch.setattr(app_runner, "AutoSellService", FakeService)
 
     exit_code = app_runner.run_auto_sell(
         config_path=Path("config/sim_account.yaml"),
@@ -499,7 +499,7 @@ def test_run_auto_sell_prints_latency_fields(monkeypatch, capsys) -> None:
     monkeypatch.setattr(app_runner, "OrderExecutionStateStore", lambda logger: SimpleNamespace())
     monkeypatch.setattr(app_runner, "PositionDecisionStateStore", lambda logger: SimpleNamespace())
     monkeypatch.setattr(app_runner, "SellDecisionEngine", lambda: SimpleNamespace())
-    monkeypatch.setattr(app_runner, "M3ExecutionService", FakeService)
+    monkeypatch.setattr(app_runner, "AutoSellService", FakeService)
 
     exit_code = app_runner.run_auto_sell(
         config_path=Path("config/sim_account.yaml"),
@@ -518,28 +518,3 @@ def test_run_auto_sell_prints_latency_fields(monkeypatch, capsys) -> None:
     assert "decision_engine" not in service_kwargs_list[0]
     assert '"order_terminal_latency_ms": 1000' in lines[1]
     assert '"submit_accepted_at": "2026-04-13T10:00:00+08:00"' in lines[1]
-
-
-def test_app_runner_m3_execution_service_compat_accepts_legacy_constructor_args(
-    monkeypatch,
-) -> None:
-    created_pipelines: list[SimpleNamespace] = []
-
-    def _fake_pipeline(**kwargs):
-        pipeline = SimpleNamespace(**kwargs)
-        created_pipelines.append(pipeline)
-        return pipeline
-
-    monkeypatch.setattr(app_runner, "SellCandidatePipeline", _fake_pipeline)
-
-    service = app_runner.M3ExecutionService(
-        trade_gateway=SimpleNamespace(),
-        market_gateway=SimpleNamespace(),
-        decision_state_manager=SimpleNamespace(),
-        execution_state_manager=SimpleNamespace(),
-        decision_engine=SimpleNamespace(),
-        logger=SimpleNamespace(),
-    )
-
-    assert created_pipelines
-    assert service._candidate_pipeline is created_pipelines[0]
