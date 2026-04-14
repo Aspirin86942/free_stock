@@ -6,27 +6,26 @@ from types import SimpleNamespace
 
 import pytest
 
-import main
+import observe_decisions
 
 
 def test_build_parser_accepts_config_argument() -> None:
-    parser = main.build_parser()
+    parser = observe_decisions.build_parser()
     args = parser.parse_args(["--config", "config/sim_account.yaml"])
 
     assert Path(args.config) == Path("config/sim_account.yaml")
 
 
-def test_parse_cli_args_defaults_to_auto_sell() -> None:
-    args = main.parse_cli_args(["--config", "config/sim_account.yaml"])
+def test_parse_cli_args_defaults_to_observer() -> None:
+    args = observe_decisions.parse_cli_args(["--config", "config/sim_account.yaml"])
 
     assert args.config == "config/sim_account.yaml"
     assert args.once is False
     assert args.max_rounds is None
-    assert args.reconcile_timeout_seconds == 5
 
 
 def test_parse_cli_args_accepts_once_mode() -> None:
-    args = main.parse_cli_args(
+    args = observe_decisions.parse_cli_args(
         [
             "--config",
             "config/sim_account.yaml",
@@ -39,7 +38,7 @@ def test_parse_cli_args_accepts_once_mode() -> None:
 
 
 def test_parse_cli_args_accepts_max_rounds() -> None:
-    args = main.parse_cli_args(
+    args = observe_decisions.parse_cli_args(
         [
             "--config",
             "config/sim_account.yaml",
@@ -54,7 +53,7 @@ def test_parse_cli_args_accepts_max_rounds() -> None:
 
 def test_parse_cli_args_rejects_once_and_max_rounds() -> None:
     with pytest.raises(SystemExit):
-        main.parse_cli_args(
+        observe_decisions.parse_cli_args(
             [
                 "--config",
                 "config/sim_account.yaml",
@@ -65,55 +64,32 @@ def test_parse_cli_args_rejects_once_and_max_rounds() -> None:
         )
 
 
-def test_parse_cli_args_rejects_non_positive_max_rounds() -> None:
+def test_parse_cli_args_rejects_reconcile_timeout_seconds(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     with pytest.raises(SystemExit):
-        main.parse_cli_args(
+        observe_decisions.parse_cli_args(
             [
                 "--config",
                 "config/sim_account.yaml",
-                "--max-rounds",
-                "0",
-            ]
-        )
-
-
-def test_parse_cli_args_rejects_mode_argument(capsys: pytest.CaptureFixture[str]) -> None:
-    with pytest.raises(SystemExit):
-        main.parse_cli_args(
-            [
-                "--config",
-                "config/sim_account.yaml",
-                "--mode",
-                "m3",
+                "--reconcile-timeout-seconds",
+                "5",
             ]
         )
 
     captured = capsys.readouterr()
-    assert "unrecognized arguments: --mode m3" in captured.err
+    assert "unrecognized arguments: --reconcile-timeout-seconds 5" in captured.err
 
 
-def test_parse_cli_args_accepts_reconcile_timeout_seconds() -> None:
-    args = main.parse_cli_args(
-        [
-            "--config",
-            "config/sim_account.yaml",
-            "--reconcile-timeout-seconds",
-            "7",
-        ]
-    )
-
-    assert args.reconcile_timeout_seconds == 7
-
-
-def test_main_dispatches_to_auto_sell(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_main_dispatches_to_decision_observer(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, object] = {}
 
-    def _run_auto_sell(**kwargs: object) -> int:
+    def _run_decision_observer(**kwargs: object) -> int:
         captured.update(kwargs)
         return 0
 
     runner = SimpleNamespace(
-        run_auto_sell=_run_auto_sell,
+        run_decision_observer=_run_decision_observer,
     )
 
     monkeypatch.setitem(sys.modules, "gmtrade_live.app_runner", runner)
@@ -121,17 +97,15 @@ def test_main_dispatches_to_auto_sell(monkeypatch: pytest.MonkeyPatch) -> None:
         sys,
         "argv",
         [
-            "main.py",
+            "observe_decisions.py",
             "--config",
             "config/sim_account.yaml",
-            "--once",
-            "--reconcile-timeout-seconds",
-            "7",
+            "--max-rounds",
+            "2",
         ],
     )
 
-    assert main.main() == 0
+    assert observe_decisions.main() == 0
     assert captured["config_path"] == Path("config/sim_account.yaml")
-    assert captured["once"] is True
-    assert captured["max_rounds"] is None
-    assert captured["reconcile_timeout_seconds"] == 7
+    assert captured["once"] is False
+    assert captured["max_rounds"] == 2

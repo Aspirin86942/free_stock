@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from gmtrade_live import bootstrap
+from gmtrade_live import app_runner
 from gmtrade_live.models import (
     OrderExecutionSnapshot,
     OrderRequest,
@@ -127,44 +127,44 @@ def _write_smoke_config(tmp_path: Path, log_dir: Path) -> Path:
 def _patch_m2_service(monkeypatch, *, clock, timer: FakeTimer) -> None:
     """替换 SellCandidatePipeline，稳定 clock/timer 输出，便于 smoke 在任意时间快速重复跑。
 
-    注意：当前 run_m2_dry_run() 的接线是 SellCandidatePipeline + DecisionObserverService，
+    注意：当前 run_decision_observer() 的接线是 SellCandidatePipeline + DecisionObserverService，
     smoke 只需要在新的接线点注入稳定时间即可，不应恢复旧 M2DryRunService API。
     """
 
-    class StablePipeline(bootstrap.SellCandidatePipeline):
+    class StablePipeline(app_runner.SellCandidatePipeline):
         def __init__(self, *args, **kwargs):
             kwargs.setdefault("clock", clock)
             kwargs.setdefault("timer", timer)
             super().__init__(*args, **kwargs)
 
-    monkeypatch.setattr(bootstrap, "SellCandidatePipeline", StablePipeline)
+    monkeypatch.setattr(app_runner, "SellCandidatePipeline", StablePipeline)
 
 
 def _patch_m3_service(monkeypatch, *, clock, timer: FakeTimer, sleep) -> None:
     """替换 M3ExecutionService，稳定 clock/timer/sleep，避免莫名的等待或跳动。"""
 
-    class StablePipeline(bootstrap.SellCandidatePipeline):
+    class StablePipeline(app_runner.SellCandidatePipeline):
         def __init__(self, *args, **kwargs):
             kwargs.setdefault("clock", clock)
             kwargs.setdefault("timer", timer)
             super().__init__(*args, **kwargs)
 
-    class StableM3Service(bootstrap.M3ExecutionService):
+    class StableM3Service(app_runner.M3ExecutionService):
         def __init__(self, *args, **kwargs):
             kwargs.setdefault("clock", clock)
             kwargs.setdefault("timer", timer)
             kwargs.setdefault("sleep", sleep)
             super().__init__(*args, **kwargs)
 
-    monkeypatch.setattr(bootstrap, "SellCandidatePipeline", StablePipeline)
-    monkeypatch.setattr(bootstrap, "M3ExecutionService", StableM3Service)
+    monkeypatch.setattr(app_runner, "SellCandidatePipeline", StablePipeline)
+    monkeypatch.setattr(app_runner, "M3ExecutionService", StableM3Service)
 
 
 def _patch_sess_state(monkeypatch) -> None:
     """让 smoke 固定会话态为 TRADING，避免运行时依赖真实时间。"""
 
     monkeypatch.setattr(
-        bootstrap,
+        app_runner,
         "_resolve_current_session_state",
         lambda config: TradingSessionState.TRADING,
     )
@@ -279,14 +279,14 @@ def test_local_m2_smoke_emits_summary_and_runtime_log(
     )
     market_gateway = FakeMarketGateway(quotes=(_build_quote(),))
 
-    monkeypatch.setattr(bootstrap, "GMTradeGateway", lambda *args, **kwargs: trade_gateway)
+    monkeypatch.setattr(app_runner, "GMTradeGateway", lambda *args, **kwargs: trade_gateway)
     monkeypatch.setattr(
-        bootstrap,
+        app_runner,
         "GMCurrentQuoteGateway",
         lambda *args, **kwargs: market_gateway,
     )
 
-    exit_code = bootstrap.run_m2_dry_run(
+    exit_code = app_runner.run_decision_observer(
         config_path=config_path,
         once=True,
         max_rounds=None,
@@ -325,14 +325,14 @@ def test_local_m3_smoke_emits_audit_log_and_latency(
     )
     market_gateway = FakeMarketGateway(quotes=(_build_quote(),))
 
-    monkeypatch.setattr(bootstrap, "GMTradeGateway", lambda *args, **kwargs: trade_gateway)
+    monkeypatch.setattr(app_runner, "GMTradeGateway", lambda *args, **kwargs: trade_gateway)
     monkeypatch.setattr(
-        bootstrap,
+        app_runner,
         "GMCurrentQuoteGateway",
         lambda *args, **kwargs: market_gateway,
     )
 
-    exit_code = bootstrap.run_m3_execution(
+    exit_code = app_runner.run_auto_sell(
         config_path=config_path,
         once=True,
         max_rounds=None,

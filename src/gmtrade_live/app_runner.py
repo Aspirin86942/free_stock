@@ -25,7 +25,7 @@ from gmtrade_live.session import resolve_trading_session
 
 
 class M3ExecutionService(AutoSellService):
-    """bootstrap 本地兼容 seam。
+    """app_runner 本地兼容 seam。
 
     目标：
     - 主路径使用产品语义参数（candidate_pipeline）实例化；
@@ -188,7 +188,7 @@ def run_m1_manual_trade(
     return 0 if report.verification_passed else 1
 
 
-def run_m2_dry_run(
+def run_decision_observer(
     *,
     config_path: Path,
     once: bool,
@@ -327,7 +327,7 @@ def run_m2_dry_run(
         round_no += 1
 
 
-def run_m3_execution(
+def run_auto_sell(
     *,
     config_path: Path,
     once: bool,

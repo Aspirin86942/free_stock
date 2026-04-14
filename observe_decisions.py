@@ -1,4 +1,4 @@
-"""自动卖出入口，负责解析 CLI 参数并分发执行。"""
+"""决策观测入口，负责解析 CLI 参数并分发执行。"""
 
 from __future__ import annotations
 
@@ -19,39 +19,33 @@ def _parse_positive_int(value: str) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """构建自动卖出 CLI 参数。"""
+    """构建决策观测 CLI 参数。"""
     parser = argparse.ArgumentParser(
-        description="GMTrade auto sell execution"
+        description="GMTrade decision observer"
     )
     parser.add_argument("--config", required=True, help="Path to YAML config file")
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--once", action="store_true")
     group.add_argument("--max-rounds", type=_parse_positive_int)
-    parser.add_argument(
-        "--reconcile-timeout-seconds",
-        type=_parse_positive_int,
-        default=5,
-    )
     return parser
 
 
 def parse_cli_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    """解析并校验自动卖出 CLI 参数。"""
+    """解析并校验决策观测 CLI 参数。"""
     parser = build_parser()
     return parser.parse_args(argv)
 
 
 def main() -> int:
-    """执行自动卖出入口。"""
+    """执行决策观测入口。"""
     args = parse_cli_args()
-    from gmtrade_live.app_runner import run_auto_sell
+    from gmtrade_live.app_runner import run_decision_observer
 
     config_path = Path(args.config)
-    return run_auto_sell(
+    return run_decision_observer(
         config_path=config_path,
         once=args.once,
         max_rounds=args.max_rounds,
-        reconcile_timeout_seconds=args.reconcile_timeout_seconds,
     )
 
 
