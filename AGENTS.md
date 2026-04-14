@@ -25,20 +25,23 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 # 安装项目（开发模式）
 conda run -n stock_analysis python -m pip install -e .
 
-# 正式入口：自动卖出执行（需要先启动掘金终端）
+# 自动卖出入口（需要先启动掘金终端）
 conda run -n stock_analysis python main.py --config config/sim_account.yaml
-
-# 验证掘金 API 连接
-conda run -n stock_analysis python scripts/verify_gm_api.py
 ```
 
-### Debug 工具：决策观测
+### 入口清单
 ```bash
-# 单轮观测
+# 自动卖出入口
+conda run -n stock_analysis python main.py --config config/sim_account.yaml
+
+# 决策观测入口
 conda run -n stock_analysis python observe_decisions.py --config config/sim_account.yaml --once
 
-# 连续 3 轮观测
-conda run -n stock_analysis python observe_decisions.py --config config/sim_account.yaml --max-rounds 3
+# 调试连通性
+conda run -n stock_analysis python tools/debug/check_connectivity.py --config config/sim_account.yaml
+
+# 调试手工交易
+conda run -n stock_analysis python tools/debug/manual_trade.py --config config/sim_account.yaml
 ```
 
 ### 测试
@@ -125,11 +128,7 @@ conda run -n stock_analysis pytest tests/integration/
 3. 能读取持仓列表
 4. 能获取行情数据
 
-运行 M0 验证：
-```bash
-conda run -n stock_analysis python main.py --config config/sim_account.yaml
-# 预期输出：JSON 格式的账户摘要（account_id, available_cash, position_count, quote_count）
-```
+通过调试连通性工具验证（见上方入口清单）。
 
 ### 单元测试 vs 集成测试
 - **单元测试**（tests/unit/）：不依赖掘金终端，使用 mock

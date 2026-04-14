@@ -29,3 +29,15 @@ conda run -n stock_analysis python observe_decisions.py --config config/sim_acco
 # 连续 3 轮观测
 conda run -n stock_analysis python observe_decisions.py --config config/sim_account.yaml --max-rounds 3
 ```
+
+调试连通性：
+
+```bash
+conda run -n stock_analysis python tools/debug/check_connectivity.py --config config/sim_account.yaml
+```
+
+调试手工交易：
+
+```bash
+conda run -n stock_analysis python tools/debug/manual_trade.py --config config/sim_account.yaml
+```
