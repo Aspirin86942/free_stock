@@ -6,6 +6,7 @@
 """
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 
@@ -31,14 +32,21 @@ def main() -> int:
 
     args = parser.parse_args()
 
+    # 配置根日志记录器，确保所有模块的日志都能输出
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s.%(msecs)03d %(levelname)s %(name)s %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
+        handlers=[logging.StreamHandler()]
+    )
+
     # 加载配置
     config = load_runtime_config(args.config)
 
     # 初始化日志
     setup_logging(
-        log_dir=config.log_dir,
         strategy_name="market-analysis-scheduler",
-        timezone=config.gm.timezone,
+        log_dir=Path(config.log_dir),
     )
 
     # 创建调度器

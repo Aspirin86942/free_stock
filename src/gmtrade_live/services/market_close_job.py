@@ -69,10 +69,31 @@ def run_market_close_job(config: RuntimeConfig) -> MarketCloseJobResult:
         )
         logger.info(f"报告生成完成: {report.report_trade_date}")
 
-        # 4. 发送飞书通知
-        feishu_service = FeishuNotificationService(config.feishu)
-        feishu_service.send_market_close_report(report)
-        logger.info("飞书通知发送完成")
+        # 打印报告内容到控制台
+        print("\n" + "="*80)
+        print(f"📊 市场分析日报 - {report.report_trade_date}")
+        print(f"\n{report.summary}\n")
+
+        # 打印明细表
+        print("| 交易日     | 上涨家数 | 下跌家数 | 上涨占比 | 成交金额(亿) |")
+        print("|-----------|---------|---------|---------|-------------|")
+        for row in report.daily_rows:
+            print(
+                f"| {row.trade_date} "
+                f"| {row.breadth.up_count:8d} "
+                f"| {row.breadth.down_count:8d} "
+                f"| {row.breadth.up_ratio:7.2%} "
+                f"| {row.breadth.total_amount / 100000000:11.0f} |"
+            )
+        print("="*80 + "\n")
+
+        # 4. 发送飞书通知（如果配置了有效的 webhook）
+        if config.feishu.webhook and not config.feishu.webhook.endswith("/placeholder"):
+            feishu_service = FeishuNotificationService(config.feishu)
+            feishu_service.send_market_close_report(report)
+            logger.info("飞书通知发送完成")
+        else:
+            logger.info("跳过飞书通知（未配置有效 webhook）")
 
         # 5. 清理资源
         repository.close()

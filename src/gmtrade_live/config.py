@@ -111,7 +111,7 @@ class RuntimeConfig:
     log_dir: Path
 
 
-_ENV_PATTERN = re.compile(r"^\$\{(?P<name>[A-Z0-9_]+)\}$")
+_ENV_PATTERN = re.compile(r"^\$\{(?P<name>[A-Z0-9_]+)(?::-(?P<default>.*))?\}$")
 _REQUIRED_FIELDS = (
     "account_id",
     "token",
@@ -137,7 +137,7 @@ def _raise(code: str, message: str, *, context: dict[str, str] | None = None) ->
 
 
 def _resolve_env(value: Any, field_name: str) -> Any:
-    """解析 `${ENV_NAME}` 形式的环境变量引用。"""
+    """解析 `${ENV_NAME}` 或 `${ENV_NAME:-default}` 形式的环境变量引用。"""
     if not isinstance(value, str):
         return value
 
@@ -146,8 +146,12 @@ def _resolve_env(value: Any, field_name: str) -> Any:
         return value
 
     env_name = match.group("name")
+    default_value = match.group("default")
     env_value = os.getenv(env_name)
+
     if not env_value:
+        if default_value is not None:
+            return default_value
         _raise(
             "config.missing_env",
             f"字段 {field_name} 引用的环境变量 {env_name} 未设置",
