@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Protocol
 
 from gmtrade_live.config import AppConfig
+from gmtrade_live.market_models import DailyBar, SecurityMaster
 from gmtrade_live.models import (
     CashSnapshot,
     OrderExecutionSnapshot,
@@ -45,4 +47,31 @@ class MarketGateway(Protocol):
         ...
 
     def get_quotes(self, symbols: list[str]) -> list[QuoteSnapshot]:
+        ...
+
+
+class HistoryMarketGateway(Protocol):
+    """历史行情网关协议。"""
+
+    def connect(self, token: str, endpoint: str) -> None:
+        ...
+
+    def get_security_master(self, scope: str) -> list[SecurityMaster]:
+        ...
+
+    def fetch_daily_bars(
+        self, symbols: list[str], start_date: date, end_date: date
+    ) -> list[DailyBar]:
+        ...
+
+    def get_trade_dates(self, start_date: date, end_date: date) -> list[date]:
+        ...
+
+    def get_latest_trade_date(self, reference_date: date | None = None) -> date:
+        ...
+
+    def get_trade_date_n_years_ago(self, years: int, reference_date: date | None = None) -> date:
+        ...
+
+    def get_next_trade_date(self, current_date: date) -> date:
         ...

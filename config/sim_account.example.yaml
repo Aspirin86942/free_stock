@@ -1,11 +1,38 @@
-account_id: ${GM_ACCOUNT_ID}
-token: ${GM_TOKEN}
-strategy_name: gmtrade-live-auto-sell
-poll_interval_seconds: 5
-take_profit_ratio: "0.05"
-stop_loss_ratio: "0.03"
-sell_quantity_ratio: "1.0"
-market_session_mode: a_share
+gm:
+  token: ${GM_TOKEN}
+  endpoint: 127.0.0.1:7001
+  timezone: Asia/Shanghai
+
+trade:
+  enabled: false
+  account_id: ${GM_ACCOUNT_ID}
+  strategy_name: gmtrade-live-auto-sell
+  poll_interval_seconds: 5
+  take_profit_ratio: "0.015"
+  stop_loss_ratio: "0.02"
+  sell_quantity_ratio: "0.02"
+  market_session_mode: a_share
+
+market_analysis:
+  enabled: true
+  universe: ashare_main_gem_star
+  history_years: 3
+  recent_trade_days: 10
+  report_time: "19:15"
+
+mysql:
+  host: 127.0.0.1
+  port: 3306
+  database: market_data
+  user: ${MYSQL_USER}
+  password: ${MYSQL_PASSWORD}
+
+feishu:
+  webhook: ${FEISHU_WEBHOOK}
+
+scheduler:
+  enabled: true
+  retry_interval_minutes: 10
+  max_attempts: 3
+
 log_dir: logs
-timezone: Asia/Shanghai
-gmtrade_endpoint: 127.0.0.1:7001

@@ -4,7 +4,10 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 ## 项目概述
 
-东方财富掘金实盘执行系统（第一期）- 在掘金仿真账户中实现"持仓识别 -> 规则判断 -> 自动卖出 -> 回报收口 -> 日志审计"的最小闭环。
+东方财富掘金实盘执行系统 - 包含两条独立链路：
+
+### 1. 自动交易链路（main.py）
+在掘金仿真账户中实现"持仓识别 -> 规则判断 -> 自动卖出 -> 回报收口 -> 日志审计"的最小闭环。
 
 **核心约束**：
 - 只做自动卖出，不做自动买入
@@ -12,6 +15,16 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 - Python 3.10+，单进程常驻
 - 所有交易与行情统一走掘金官方接口
 - 主干命名已完成去阶段化；正式入口、`services/` 文件名、测试名和文档口径不再使用旧阶段编号
+
+### 2. 市场分析链路（scheduler.py）
+盘后市场分析与飞书推送系统，实现"官方日线补数 -> MySQL -> 最近 10 个交易日盘后分析 -> 飞书推送"的完整链路。
+
+**核心特性**：
+- 每日 19:15 自动触发盘后任务
+- 首次运行回补近 3 年全市场日线数据
+- 增量补数，自动识别缺口
+- 计算市场宽度、赚钱效应、容错、情绪等指标
+- 生成最近 10 个交易日分析报告并推送飞书
 
 ## 开发命令
 
@@ -38,6 +51,12 @@ conda run -n stock_analysis python main.py --config config/sim_account.yaml
 # 决策观测入口
 conda run -n stock_analysis python observe_decisions.py --config config/sim_account.yaml --once
 
+# 市场分析调度器（常驻，每日 19:15 自动执行盘后任务）
+conda run --no-capture-output -n stock_analysis python scheduler.py --config config/sim_account.yaml
+
+# 市场分析调度器（手动触发一次）
+conda run -n stock_analysis python scheduler.py --config config/sim_account.yaml --once
+
 # 调试连通性
 conda run -n stock_analysis python tools/debug/check_connectivity.py --config config/sim_account.yaml
 
@@ -63,10 +82,17 @@ conda run -n stock_analysis pytest tests/integration/
 ### 配置文件
 - 示例配置：`config/sim_account.example.yaml`
 - 实际配置：`config/sim_account.yaml`（已在 .gitignore 中）
+- **配置结构**：单 YAML 文件，多 section（gm/trade/market_analysis/mysql/feishu/scheduler）
 - **关键配置项**：
-  - `gmtrade_endpoint`: 必须是 `127.0.0.1:7001`（本地掘金终端），不是远程地址
-  - `account_id` 和 `token`：从掘金终端获取
-  - `sell_quantity_ratio`：每轮自动卖出的仓位比例，必须满足 `0 < ratio <= 1`
+  - `gm.endpoint`: 必须是 `127.0.0.1:7001`（本地掘金终端），不是远程地址
+  - `gm.token`: 掘金 API Token
+  - `trade.enabled`: 自动交易开关（默认 false）
+  - `trade.account_id`: 交易账户 ID
+  - `trade.sell_quantity_ratio`: 每轮自动卖出的仓位比例，必须满足 `0 < ratio <= 1`
+  - `market_analysis.enabled`: 盘后分析开关（默认 true）
+  - `market_analysis.report_time`: 盘后任务触发时间（默认 19:15）
+  - `mysql.*`: MySQL 数据库连接配置
+  - `feishu.webhook`: 飞书群机器人 Webhook
 
 ## 架构设计
 
@@ -164,7 +190,9 @@ conda run -n stock_analysis pytest tests/integration/
 
 ## 文档参考
 
-- 运行说明：`docs/auto-sell-runtime.md`
+- 自动交易运行说明：`docs/auto-sell-runtime.md`
+- 市场分析调度器运行说明：`docs/market-analysis-runtime.md`
 - 系统规划书：`docs/Proposal/量化交易系统规划书.md`
 - 分层 Spec：`docs/superpowers/specs/01-基础设施层-spec.md` 等
 - 实施计划：`docs/superpowers/plans/`
+- 市场分析设计文档：`docs/superpowers/specs/2026-04-14-market-analysis-scheduler-design.md`

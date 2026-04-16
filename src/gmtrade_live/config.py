@@ -22,7 +22,7 @@ class ConfigurationError(ServiceError):
 
 @dataclass(frozen=True, slots=True)
 class AppConfig:
-    """应用运行所需的只读配置快照。"""
+    """应用运行所需的只读配置快照（向后兼容，用于自动交易主链）。"""
 
     account_id: str
     token: str
@@ -35,6 +35,80 @@ class AppConfig:
     log_dir: Path
     timezone: str
     gmtrade_endpoint: str
+
+
+@dataclass(frozen=True, slots=True)
+class GmConfig:
+    """掘金 API 共享配置。"""
+
+    token: str
+    endpoint: str
+    timezone: str
+
+
+@dataclass(frozen=True, slots=True)
+class TradeConfig:
+    """自动交易链路配置。"""
+
+    enabled: bool
+    account_id: str
+    strategy_name: str
+    poll_interval_seconds: int
+    take_profit_ratio: Decimal
+    stop_loss_ratio: Decimal
+    sell_quantity_ratio: Decimal
+    market_session_mode: str
+
+
+@dataclass(frozen=True, slots=True)
+class MarketAnalysisConfig:
+    """盘后市场分析链路配置。"""
+
+    enabled: bool
+    universe: str
+    history_years: int
+    recent_trade_days: int
+    report_time: str
+
+
+@dataclass(frozen=True, slots=True)
+class MySQLConfig:
+    """MySQL 数据库配置。"""
+
+    host: str
+    port: int
+    database: str
+    user: str
+    password: str
+
+
+@dataclass(frozen=True, slots=True)
+class FeishuConfig:
+    """飞书通知配置。"""
+
+    webhook: str
+
+
+@dataclass(frozen=True, slots=True)
+class SchedulerConfig:
+    """调度器配置。"""
+
+    enabled: bool
+    retry_interval_minutes: int
+    max_attempts: int
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeConfig:
+    """运行时完整配置（包含所有子配置块）。"""
+
+    gm: GmConfig
+    trade: TradeConfig
+    market_analysis: MarketAnalysisConfig
+    mysql: MySQLConfig
+    feishu: FeishuConfig
+    scheduler: SchedulerConfig
+    log_dir: Path
 
 
 _ENV_PATTERN = re.compile(r"^\$\{(?P<name>[A-Z0-9_]+)\}$")
@@ -158,8 +232,15 @@ def _parse_sell_quantity_ratio(value: Any, field_name: str) -> Decimal:
     return result
 
 
+def _resolve_env_recursive(value: Any, field_path: str) -> Any:
+    """递归解析嵌套字典中的环境变量引用。"""
+    if isinstance(value, dict):
+        return {k: _resolve_env_recursive(v, f"{field_path}.{k}") for k, v in value.items()}
+    return _resolve_env(value, field_path)
+
+
 def load_config(config_path: Path) -> AppConfig:
-    """读取 YAML 配置并转换为类型安全的应用配置。"""
+    """读取 YAML 配置并转换为类型安全的应用配置（向后兼容，用于自动交易主链）。"""
     if not config_path.exists():
         _raise("config.not_found", "配置文件不存在", context={"path": str(config_path)})
 
@@ -212,4 +293,131 @@ def load_config(config_path: Path) -> AppConfig:
         log_dir=Path(str(resolved["log_dir"])),
         timezone=str(resolved.get("timezone", "Asia/Shanghai")),
         gmtrade_endpoint=str(resolved.get("gmtrade_endpoint", "127.0.0.1:7001")),
+    )
+
+
+def load_runtime_config(config_path: Path) -> RuntimeConfig:
+    """读取嵌套 YAML 配置并转换为运行时配置（用于 scheduler 和盘后分析）。"""
+    if not config_path.exists():
+        _raise("config.not_found", "配置文件不存在", context={"path": str(config_path)})
+
+    try:
+        raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        _raise(
+            "config.invalid_yaml",
+            "配置文件不是合法 YAML",
+            context={"path": str(config_path), "reason": str(exc)},
+        )
+
+    if not isinstance(raw, dict):
+        _raise("config.invalid_root", "配置文件根节点必须是字典结构")
+
+    # 递归解析环境变量
+    resolved = _resolve_env_recursive(raw, "root")
+
+    # 校验必需的顶层 section
+    required_sections = ["gm", "trade", "market_analysis", "mysql", "feishu", "scheduler"]
+    for section in required_sections:
+        if section not in resolved:
+            _raise(
+                "config.missing_section",
+                f"缺少必需配置块 {section}",
+                context={"section": section},
+            )
+
+    # 解析 gm 配置
+    gm_raw = resolved["gm"]
+    if not isinstance(gm_raw, dict):
+        _raise("config.invalid_section", "gm 配置块必须是字典结构")
+
+    gm_config = GmConfig(
+        token=str(gm_raw.get("token", "")),
+        endpoint=str(gm_raw.get("endpoint", "127.0.0.1:7001")),
+        timezone=str(gm_raw.get("timezone", "Asia/Shanghai")),
+    )
+
+    # 解析 trade 配置
+    trade_raw = resolved["trade"]
+    if not isinstance(trade_raw, dict):
+        _raise("config.invalid_section", "trade 配置块必须是字典结构")
+
+    trade_config = TradeConfig(
+        enabled=bool(trade_raw.get("enabled", False)),
+        account_id=str(trade_raw.get("account_id", "")),
+        strategy_name=str(trade_raw.get("strategy_name", "gmtrade-live-auto-sell")),
+        poll_interval_seconds=_parse_positive_int(
+            trade_raw.get("poll_interval_seconds", 5), "trade.poll_interval_seconds"
+        ),
+        take_profit_ratio=_parse_decimal(
+            trade_raw.get("take_profit_ratio", "0.015"), "trade.take_profit_ratio"
+        ),
+        stop_loss_ratio=_parse_decimal(
+            trade_raw.get("stop_loss_ratio", "0.02"), "trade.stop_loss_ratio"
+        ),
+        sell_quantity_ratio=_parse_sell_quantity_ratio(
+            trade_raw.get("sell_quantity_ratio", "0.02"), "trade.sell_quantity_ratio"
+        ),
+        market_session_mode=_parse_market_session_mode(
+            trade_raw.get("market_session_mode", "a_share"), "trade.market_session_mode"
+        ),
+    )
+
+    # 解析 market_analysis 配置
+    ma_raw = resolved["market_analysis"]
+    if not isinstance(ma_raw, dict):
+        _raise("config.invalid_section", "market_analysis 配置块必须是字典结构")
+
+    market_analysis_config = MarketAnalysisConfig(
+        enabled=bool(ma_raw.get("enabled", True)),
+        universe=str(ma_raw.get("universe", "ashare_main_gem_star")),
+        history_years=int(ma_raw.get("history_years", 3)),
+        recent_trade_days=int(ma_raw.get("recent_trade_days", 10)),
+        report_time=str(ma_raw.get("report_time", "19:15")),
+    )
+
+    # 解析 mysql 配置
+    mysql_raw = resolved["mysql"]
+    if not isinstance(mysql_raw, dict):
+        _raise("config.invalid_section", "mysql 配置块必须是字典结构")
+
+    mysql_config = MySQLConfig(
+        host=str(mysql_raw.get("host", "127.0.0.1")),
+        port=int(mysql_raw.get("port", 3306)),
+        database=str(mysql_raw.get("database", "market_data")),
+        user=str(mysql_raw.get("user", "")),
+        password=str(mysql_raw.get("password", "")),
+    )
+
+    # 解析 feishu 配置
+    feishu_raw = resolved["feishu"]
+    if not isinstance(feishu_raw, dict):
+        _raise("config.invalid_section", "feishu 配置块必须是字典结构")
+
+    feishu_config = FeishuConfig(
+        webhook=str(feishu_raw.get("webhook", "")),
+    )
+
+    # 解析 scheduler 配置
+    scheduler_raw = resolved["scheduler"]
+    if not isinstance(scheduler_raw, dict):
+        _raise("config.invalid_section", "scheduler 配置块必须是字典结构")
+
+    scheduler_config = SchedulerConfig(
+        enabled=bool(scheduler_raw.get("enabled", True)),
+        retry_interval_minutes=int(scheduler_raw.get("retry_interval_minutes", 10)),
+        max_attempts=int(scheduler_raw.get("max_attempts", 3)),
+    )
+
+    # 解析 log_dir（顶层字段）
+    log_dir = Path(str(resolved.get("log_dir", "logs")))
+
+    return RuntimeConfig(
+        gm=gm_config,
+        trade=trade_config,
+        market_analysis=market_analysis_config,
+        mysql=mysql_config,
+        feishu=feishu_config,
+        scheduler=scheduler_config,
+        log_dir=log_dir,
     )
