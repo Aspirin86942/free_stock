@@ -360,6 +360,57 @@ class MySQLMarketRepository:
                 },
             ) from exc
 
+    def get_daily_bars_by_date(self, trade_date: date) -> list[DailyBar]:
+        """查询指定交易日所有股票的日线数据。"""
+        if not self._connection:
+            raise RepositoryError(
+                code="repository.not_connected",
+                message="数据库未连接",
+                retryable=False,
+                context={},
+            )
+
+        sql = """
+            SELECT symbol, trade_date, open, high, low, close, pre_close,
+                   volume, amount, turnover_rate, is_st, suspended, has_trade
+            FROM market_daily_bar
+            WHERE trade_date = %s
+            ORDER BY symbol
+        """
+
+        try:
+            with self._connection.cursor() as cursor:
+                cursor.execute(sql, (trade_date,))
+                rows = cursor.fetchall()
+
+            return [
+                DailyBar(
+                    symbol=row["symbol"],
+                    trade_date=row["trade_date"],
+                    open=Decimal(str(row["open"])),
+                    high=Decimal(str(row["high"])),
+                    low=Decimal(str(row["low"])),
+                    close=Decimal(str(row["close"])),
+                    pre_close=Decimal(str(row["pre_close"])),
+                    volume=int(row["volume"]),
+                    amount=Decimal(str(row["amount"])),
+                    turnover_rate=Decimal(str(row["turnover_rate"]))
+                    if row["turnover_rate"]
+                    else None,
+                    is_st=bool(row["is_st"]),
+                    suspended=bool(row["suspended"]),
+                    has_trade=bool(row["has_trade"]),
+                )
+                for row in rows
+            ]
+        except pymysql.Error as exc:
+            raise RepositoryError(
+                code="repository.query_failed",
+                message=f"查询单日日线数据失败: {exc}",
+                retryable=True,
+                context={"trade_date": str(trade_date)},
+            ) from exc
+
     def get_all_symbols(self) -> list[str]:
         """获取所有股票代码。"""
         if not self._connection:
