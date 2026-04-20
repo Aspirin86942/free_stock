@@ -1,6 +1,7 @@
 """市场数据同步服务测试。"""
 
 from datetime import date
+from decimal import Decimal
 from unittest.mock import MagicMock
 
 import pytest
@@ -30,7 +31,9 @@ def mock_gateway() -> MagicMock:
 
 @pytest.fixture
 def mock_repository() -> MagicMock:
-    return MagicMock(spec=MySQLMarketRepository)
+    repository = MagicMock(spec=MySQLMarketRepository)
+    repository.get_latest_trade_date_in_daily_bar.return_value = None
+    return repository
 
 
 @pytest.fixture
@@ -61,7 +64,23 @@ def test_sync_first_time_fetches_3_years_data(
             listed_date=date(2020, 1, 1),
         )
     ]
-    mock_gateway.fetch_daily_bars.return_value = []
+    mock_gateway.fetch_daily_bars.return_value = [
+        DailyBar(
+            symbol="SHSE.600001",
+            trade_date=date(2026, 4, 16),
+            open=Decimal("10"),
+            high=Decimal("10.5"),
+            low=Decimal("9.8"),
+            close=Decimal("10.2"),
+            pre_close=Decimal("10"),
+            volume=1000,
+            amount=Decimal("10000"),
+            turnover_rate=None,
+            is_st=False,
+            suspended=False,
+            has_trade=True,
+        )
+    ]
     mock_repository.upsert_daily_bars.return_value = 100
 
     result = service.sync()
@@ -82,6 +101,7 @@ def test_sync_incremental_fetches_from_last_checkpoint(
     """测试增量同步从上次 checkpoint 开始。"""
     # 模拟增量同步（checkpoint 存在）
     mock_repository.get_last_success_trade_date.return_value = date(2026, 4, 15)
+    mock_repository.get_latest_trade_date_in_daily_bar.return_value = date(2026, 4, 15)
     mock_gateway.get_next_trade_date.return_value = date(2026, 4, 16)
     mock_gateway.get_latest_trade_date.return_value = date(2026, 4, 16)
     mock_gateway.get_security_master.return_value = [
@@ -93,7 +113,23 @@ def test_sync_incremental_fetches_from_last_checkpoint(
             listed_date=date(2020, 1, 1),
         )
     ]
-    mock_gateway.fetch_daily_bars.return_value = []
+    mock_gateway.fetch_daily_bars.return_value = [
+        DailyBar(
+            symbol="SHSE.600001",
+            trade_date=date(2026, 4, 16),
+            open=Decimal("10"),
+            high=Decimal("10.5"),
+            low=Decimal("9.8"),
+            close=Decimal("10.2"),
+            pre_close=Decimal("10"),
+            volume=1000,
+            amount=Decimal("10000"),
+            turnover_rate=None,
+            is_st=False,
+            suspended=False,
+            has_trade=True,
+        )
+    ]
     mock_repository.upsert_daily_bars.return_value = 10
 
     result = service.sync()
@@ -114,6 +150,7 @@ def test_sync_returns_zero_when_no_new_data(
     """测试没有新数据时返回零。"""
     # 模拟已经是最新数据
     mock_repository.get_last_success_trade_date.return_value = date(2026, 4, 16)
+    mock_repository.get_latest_trade_date_in_daily_bar.return_value = date(2026, 4, 16)
     mock_gateway.get_next_trade_date.return_value = date(2026, 4, 17)
     mock_gateway.get_latest_trade_date.return_value = date(2026, 4, 16)
 
@@ -147,10 +184,95 @@ def test_sync_batches_symbols_in_chunks(
     mock_gateway.get_trade_date_n_years_ago.return_value = date(2023, 4, 16)
     mock_gateway.get_latest_trade_date.return_value = date(2026, 4, 16)
     mock_gateway.get_security_master.return_value = securities
-    mock_gateway.fetch_daily_bars.return_value = []
+    mock_gateway.fetch_daily_bars.return_value = [
+        DailyBar(
+            symbol="SHSE.600001",
+            trade_date=date(2026, 4, 16),
+            open=Decimal("10"),
+            high=Decimal("10.5"),
+            low=Decimal("9.8"),
+            close=Decimal("10.2"),
+            pre_close=Decimal("10"),
+            volume=1000,
+            amount=Decimal("10000"),
+            turnover_rate=None,
+            is_st=False,
+            suspended=False,
+            has_trade=True,
+        )
+    ]
     mock_repository.upsert_daily_bars.return_value = 50
 
-    result = service.sync()
+    service.sync()
 
     # 应该调用 2 次 fetch_daily_bars（100 只股票 / 50 = 2 批）
     assert mock_gateway.fetch_daily_bars.call_count == 2
+
+
+def test_sync_checkpoint_clamps_to_latest_synced_bar_date(
+    service: MarketDataSyncService,
+    mock_gateway: MagicMock,
+    mock_repository: MagicMock,
+) -> None:
+    """测试 checkpoint 只推进到实际同步到的最新交易日。"""
+    mock_repository.get_last_success_trade_date.return_value = date(2026, 4, 16)
+    mock_repository.get_latest_trade_date_in_daily_bar.return_value = date(2026, 4, 16)
+    mock_gateway.get_next_trade_date.return_value = date(2026, 4, 17)
+    mock_gateway.get_latest_trade_date.return_value = date(2026, 4, 21)
+    mock_gateway.get_security_master.return_value = [
+        SecurityMaster(
+            symbol="SHSE.600001",
+            exchange="SHSE",
+            name="测试股票",
+            board="main",
+            listed_date=date(2020, 1, 1),
+        )
+    ]
+    mock_gateway.fetch_daily_bars.return_value = [
+        DailyBar(
+            symbol="SHSE.600001",
+            trade_date=date(2026, 4, 20),
+            open=Decimal("10"),
+            high=Decimal("10.5"),
+            low=Decimal("9.8"),
+            close=Decimal("10.2"),
+            pre_close=Decimal("10"),
+            volume=1000,
+            amount=Decimal("10000"),
+            turnover_rate=None,
+            is_st=False,
+            suspended=False,
+            has_trade=True,
+        )
+    ]
+    mock_repository.upsert_daily_bars.return_value = 1
+
+    result = service.sync()
+
+    assert result.latest_trade_date == date(2026, 4, 20)
+    mock_repository.save_last_success_trade_date.assert_called_once_with(
+        "market_daily_sync",
+        date(2026, 4, 20),
+    )
+
+
+def test_sync_rewinds_stale_checkpoint_to_db_latest_date(
+    service: MarketDataSyncService,
+    mock_gateway: MagicMock,
+    mock_repository: MagicMock,
+) -> None:
+    """测试 checkpoint 超前于事实表时会回退到事实表最新日期。"""
+    mock_repository.get_last_success_trade_date.return_value = date(2026, 4, 21)
+    mock_repository.get_latest_trade_date_in_daily_bar.return_value = date(2026, 4, 16)
+    mock_gateway.get_next_trade_date.return_value = date(2026, 4, 17)
+    mock_gateway.get_latest_trade_date.return_value = date(2026, 4, 16)
+
+    result = service.sync()
+
+    assert result.latest_trade_date == date(2026, 4, 16)
+    mock_gateway.get_next_trade_date.assert_called_once_with(date(2026, 4, 16))
+    # 回退时会先校正 checkpoint，然后本轮因无新数据不再推进
+    mock_repository.save_last_success_trade_date.assert_called_once_with(
+        "market_daily_sync",
+        date(2026, 4, 16),
+    )

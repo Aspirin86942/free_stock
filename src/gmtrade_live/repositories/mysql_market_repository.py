@@ -5,14 +5,13 @@ from __future__ import annotations
 import logging
 from datetime import date
 from decimal import Decimal
-from typing import Any
 
 import pymysql
 from pymysql.cursors import DictCursor
 
 from gmtrade_live.config import MySQLConfig
 from gmtrade_live.errors import ServiceError
-from gmtrade_live.market_models import DailyBar, SecurityMaster, SyncCheckpoint
+from gmtrade_live.market_models import DailyBar, SecurityMaster
 
 logger = logging.getLogger(__name__)
 
@@ -466,4 +465,30 @@ class MySQLMarketRepository:
                 message=f"查询最近交易日失败: {exc}",
                 retryable=True,
                 context={"end_date": str(end_date), "limit": limit},
+            ) from exc
+
+    def get_latest_trade_date_in_daily_bar(self) -> date | None:
+        """获取事实表 market_daily_bar 中已落库的最新交易日。"""
+        if not self._connection:
+            raise RepositoryError(
+                code="repository.not_connected",
+                message="数据库未连接",
+                retryable=False,
+                context={},
+            )
+
+        sql = "SELECT MAX(trade_date) AS latest_trade_date FROM market_daily_bar"
+        try:
+            with self._connection.cursor() as cursor:
+                cursor.execute(sql)
+                row = cursor.fetchone()
+            if not row:
+                return None
+            return row["latest_trade_date"]
+        except pymysql.Error as exc:
+            raise RepositoryError(
+                code="repository.query_failed",
+                message=f"查询最新交易日失败: {exc}",
+                retryable=True,
+                context={},
             ) from exc

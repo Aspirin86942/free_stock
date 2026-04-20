@@ -40,18 +40,46 @@ class MarketDataSyncService:
         """执行同步：首次三年全量回补或增量补数。"""
         # 1. 获取最后成功同步的交易日
         last_success_date = self.repository.get_last_success_trade_date("market_daily_sync")
+        latest_trade_date_in_db = self.repository.get_latest_trade_date_in_daily_bar()
+
+        effective_last_success_date = last_success_date
+        if (
+            last_success_date is not None
+            and latest_trade_date_in_db is not None
+            and last_success_date > latest_trade_date_in_db
+        ):
+            logger.warning(
+                "检测到 checkpoint 超前于事实表，自动回退到事实表最新交易日",
+                extra={
+                    "checkpoint_trade_date": str(last_success_date),
+                    "latest_trade_date_in_db": str(latest_trade_date_in_db),
+                },
+            )
+            effective_last_success_date = latest_trade_date_in_db
+            self.repository.save_last_success_trade_date(
+                "market_daily_sync",
+                latest_trade_date_in_db,
+            )
+        elif last_success_date is not None and latest_trade_date_in_db is None:
+            logger.warning(
+                "checkpoint 存在但事实表为空，本轮按首次同步执行",
+                extra={"checkpoint_trade_date": str(last_success_date)},
+            )
+            effective_last_success_date = None
 
         # 2. 确定同步起止日期
-        if last_success_date is None:
+        if effective_last_success_date is None:
             # 首次同步：回补近 N 年
             start_date = self.gateway.get_trade_date_n_years_ago(self.config.history_years)
             is_first_sync = True
             logger.info(f"首次同步，回补近 {self.config.history_years} 年数据，起始日期: {start_date}")
         else:
             # 增量同步：从上次成功日期的下一个交易日开始
-            start_date = self.gateway.get_next_trade_date(last_success_date)
+            start_date = self.gateway.get_next_trade_date(effective_last_success_date)
             is_first_sync = False
-            logger.info(f"增量同步，上次成功日期: {last_success_date}，起始日期: {start_date}")
+            logger.info(
+                f"增量同步，上次成功日期: {effective_last_success_date}，起始日期: {start_date}"
+            )
 
         # 3. 获取最新已完成交易日
         end_date = self.gateway.get_latest_trade_date()
@@ -61,7 +89,7 @@ class MarketDataSyncService:
         if start_date > end_date:
             logger.info("没有新数据需要同步")
             return SyncResult(
-                latest_trade_date=last_success_date or end_date,
+                latest_trade_date=effective_last_success_date or latest_trade_date_in_db or end_date,
                 inserted_rows=0,
                 updated_rows=0,
                 is_first_sync=is_first_sync,
@@ -77,6 +105,7 @@ class MarketDataSyncService:
         batch_size = 50  # 每批 50 只股票
         total_inserted = 0
         total_updated = 0
+        latest_synced_trade_date = effective_last_success_date
 
         for i in range(0, len(symbols), batch_size):
             batch_symbols = symbols[i : i + batch_size]
@@ -90,13 +119,28 @@ class MarketDataSyncService:
                 affected = self.repository.upsert_daily_bars(bars)
                 total_inserted += affected
                 logger.info(f"批次同步完成，影响行数: {affected}")
+                batch_latest_trade_date = max(bar.trade_date for bar in bars)
+                if (
+                    latest_synced_trade_date is None
+                    or batch_latest_trade_date > latest_synced_trade_date
+                ):
+                    latest_synced_trade_date = batch_latest_trade_date
 
         # 7. 更新 checkpoint
-        self.repository.save_last_success_trade_date("market_daily_sync", end_date)
-        logger.info(f"同步完成，checkpoint 已更新至: {end_date}")
+        if (
+            latest_synced_trade_date is not None
+            and (
+                effective_last_success_date is None
+                or latest_synced_trade_date > effective_last_success_date
+            )
+        ):
+            self.repository.save_last_success_trade_date("market_daily_sync", latest_synced_trade_date)
+            logger.info(f"同步完成，checkpoint 已更新至: {latest_synced_trade_date}")
+        else:
+            logger.info("本轮无新增落库交易日，checkpoint 不推进")
 
         return SyncResult(
-            latest_trade_date=end_date,
+            latest_trade_date=latest_synced_trade_date or latest_trade_date_in_db or end_date,
             inserted_rows=total_inserted,
             updated_rows=total_updated,
             is_first_sync=is_first_sync,
