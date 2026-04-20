@@ -5,11 +5,13 @@ from __future__ import annotations
 import logging
 import time
 from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from gmtrade_live.config import RuntimeConfig
+from gmtrade_live.gateways.gm_history_market_gateway import GMHistoryMarketGateway
 from gmtrade_live.services.market_close_job import run_market_close_job
 
 logger = logging.getLogger(__name__)
@@ -47,6 +49,7 @@ class RuntimeScheduler:
 
         # 创建 Cron 触发器（每个交易日的指定时间）
         trigger = CronTrigger(
+            day_of_week="mon-fri",
             hour=hour,
             minute=minute,
             timezone=self.config.gm.timezone,
@@ -73,7 +76,17 @@ class RuntimeScheduler:
         for attempt in range(1, max_attempts + 1):
             logger.info(f"盘后任务执行，尝试 {attempt}/{max_attempts}")
 
-            result = run_market_close_job(self.config)
+            try:
+                if not self._has_completed_trade_day():
+                    logger.info("今日无已完成交易日，跳过盘后任务")
+                    return
+                result = run_market_close_job(self.config)
+            except Exception as exc:
+                logger.error(f"盘后任务执行异常: {exc}", exc_info=True)
+                if attempt < max_attempts:
+                    logger.info(f"等待 {self.config.scheduler.retry_interval_minutes} 分钟后重试")
+                    time.sleep(retry_interval_seconds)
+                continue
 
             if result.success:
                 logger.info(
@@ -95,3 +108,18 @@ class RuntimeScheduler:
         """手动触发一次盘后任务（用于测试）。"""
         logger.info("手动触发盘后任务")
         self._run_market_close_job_with_retry()
+
+    def _has_completed_trade_day(self) -> bool:
+        """判断当前自然日是否存在已完成交易日。"""
+        now = datetime.now(tz=ZoneInfo(self.config.gm.timezone))
+        today = now.date()
+
+        gateway = GMHistoryMarketGateway()
+        gateway.connect(self.config.gm.token, self.config.gm.endpoint)
+
+        today_trade_dates = gateway.get_trade_dates(today, today)
+        if today not in today_trade_dates:
+            return False
+
+        latest_trade_date = gateway.get_latest_trade_date(reference_date=today)
+        return latest_trade_date == today

@@ -16,7 +16,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 - 所有交易与行情统一走掘金官方接口
 - 主干命名已完成去阶段化；正式入口、`services/` 文件名、测试名和文档口径不再使用旧阶段编号
 
-### 2. 市场分析链路（scheduler.py）
+### 2. 市场分析链路（main.py scheduler）
 盘后市场分析与飞书推送系统，实现"官方日线补数 -> MySQL -> 最近 10 个交易日盘后分析 -> 飞书推送"的完整链路。
 
 **核心特性**：
@@ -40,22 +40,22 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 conda run -n stock_analysis python -m pip install -e .
 
 # 自动卖出入口（需要先启动掘金终端）
-conda run --no-capture-output -n stock_analysis python main.py --config config/sim_account.yaml
+conda run --no-capture-output -n stock_analysis python main.py trade --config config/sim_account.yaml
 ```
 
 ### 入口清单
 ```bash
 # 自动卖出入口
-conda run -n stock_analysis python main.py --config config/sim_account.yaml
+conda run -n stock_analysis python main.py trade --config config/sim_account.yaml
 
 # 决策观测入口
 conda run -n stock_analysis python observe_decisions.py --config config/sim_account.yaml --once
 
 # 市场分析调度器（常驻，每日 19:15 自动执行盘后任务）
-conda run --no-capture-output -n stock_analysis python scheduler.py --config config/sim_account.yaml
+conda run --no-capture-output -n stock_analysis python main.py scheduler --config config/sim_account.yaml
 
 # 市场分析调度器（手动触发一次）
-conda run -n stock_analysis python scheduler.py --config config/sim_account.yaml --once
+conda run -n stock_analysis python main.py scheduler --config config/sim_account.yaml --once
 
 # 调试连通性
 conda run -n stock_analysis python tools/debug/check_connectivity.py --config config/sim_account.yaml
@@ -184,9 +184,9 @@ conda run -n stock_analysis pytest tests/integration/
    - 原因：掘金终端未运行或 `gmtrade_endpoint` 配置错误
    - 解决：启动掘金终端，确认 `gmtrade_endpoint: 127.0.0.1:7001`
 
-3. **usage: main.py [-h] --config CONFIG**
-   - 原因：未指定配置文件
-   - 解决：`conda run -n stock_analysis python main.py --config config/sim_account.yaml`
+3. **usage: main.py [-h] {trade,scheduler} ...**
+   - 原因：未指定子命令或未指定配置文件
+   - 解决：`conda run -n stock_analysis python main.py trade --config config/sim_account.yaml`
 
 ## 文档参考
 

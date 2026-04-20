@@ -6,7 +6,7 @@ import logging
 from datetime import date
 from decimal import Decimal
 
-from gmtrade_live.market_models import MarketBreadthMetrics
+from gmtrade_live.market_models import DailyBar, MarketBreadthMetrics
 from gmtrade_live.repositories.mysql_market_repository import MySQLMarketRepository
 
 logger = logging.getLogger(__name__)
@@ -32,6 +32,8 @@ class MarketBreadthAnalyzer:
                 down_count=0,
                 up_ratio=Decimal("0"),
                 total_amount=Decimal("0"),
+                limit_up_count=0,
+                limit_down_count=0,
                 new_high_20d_count=0,
                 new_low_20d_count=0,
                 new_high_60d_count=0,
@@ -50,16 +52,35 @@ class MarketBreadthAnalyzer:
         # 计算总成交金额
         total_amount = sum(bar.amount for bar in valid_bars)
 
-        # TODO: 实现新高新低统计（需要查询历史数据）
-        # 当前简化实现，返回 0
-        new_high_20d_count = 0
-        new_low_20d_count = 0
-        new_high_60d_count = 0
-        new_low_60d_count = 0
+        # 计算涨停/跌停数量
+        limit_up_count = 0
+        limit_down_count = 0
+        for bar in valid_bars:
+            pct_change = (bar.close - bar.pre_close) / bar.pre_close
+            # ST 股票涨跌停限制为 5%，其他为 10%
+            limit_threshold = Decimal("0.05") if bar.is_st else Decimal("0.10")
+
+            if pct_change >= limit_threshold * Decimal("0.99"):  # 9.9% 或 4.95%
+                limit_up_count += 1
+            elif pct_change <= -limit_threshold * Decimal("0.99"):
+                limit_down_count += 1
+
+        symbols = [bar.symbol for bar in valid_bars]
+        new_high_20d_count, new_low_20d_count = self._count_new_high_low(
+            trade_date=trade_date,
+            symbols=symbols,
+            lookback_trade_days=20,
+        )
+        new_high_60d_count, new_low_60d_count = self._count_new_high_low(
+            trade_date=trade_date,
+            symbols=symbols,
+            lookback_trade_days=60,
+        )
 
         logger.info(
             f"市场宽度: 上涨{up_count}家, 下跌{down_count}家, "
-            f"上涨占比{up_ratio:.2%}, 成交额{total_amount/100000000:.0f}亿"
+            f"上涨占比{up_ratio:.2%}, 成交额{total_amount/100000000:.0f}亿, "
+            f"涨停{limit_up_count}家, 跌停{limit_down_count}家"
         )
 
         return MarketBreadthMetrics(
@@ -67,8 +88,53 @@ class MarketBreadthAnalyzer:
             down_count=down_count,
             up_ratio=up_ratio,
             total_amount=total_amount,
+            limit_up_count=limit_up_count,
+            limit_down_count=limit_down_count,
             new_high_20d_count=new_high_20d_count,
             new_low_20d_count=new_low_20d_count,
             new_high_60d_count=new_high_60d_count,
             new_low_60d_count=new_low_60d_count,
         )
+
+    def _count_new_high_low(
+        self,
+        *,
+        trade_date: date,
+        symbols: list[str],
+        lookback_trade_days: int,
+    ) -> tuple[int, int]:
+        if not symbols:
+            return 0, 0
+
+        trade_dates = self.repository.get_recent_trade_dates(trade_date, lookback_trade_days + 1)
+        if len(trade_dates) < lookback_trade_days + 1:
+            return 0, 0
+
+        start_date = trade_dates[0]
+        history_bars = self.repository.get_daily_bars(symbols, start_date, trade_date)
+
+        bars_by_symbol: dict[str, list[DailyBar]] = {}
+        for bar in history_bars:
+            bars_by_symbol.setdefault(bar.symbol, []).append(bar)
+
+        high_count = 0
+        low_count = 0
+        for symbol in symbols:
+            symbol_bars = sorted(
+                bars_by_symbol.get(symbol, []),
+                key=lambda item: item.trade_date,
+            )
+            if len(symbol_bars) < lookback_trade_days + 1:
+                continue
+
+            current_bar = symbol_bars[-1]
+            previous_closes = [bar.close for bar in symbol_bars[:-1] if bar.close > Decimal("0")]
+            if not previous_closes:
+                continue
+
+            if current_bar.close > max(previous_closes):
+                high_count += 1
+            if current_bar.close < min(previous_closes):
+                low_count += 1
+
+        return high_count, low_count

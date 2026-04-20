@@ -54,6 +54,8 @@ class MarketBreadthMetrics:
     down_count: int
     up_ratio: Decimal
     total_amount: Decimal
+    limit_up_count: int
+    limit_down_count: int
     new_high_20d_count: int
     new_low_20d_count: int
     new_high_60d_count: int
@@ -73,6 +75,8 @@ class ProfitEffectMetrics:
 class ToleranceMetrics:
     """容错指标。"""
 
+    st_count: int
+    delisting_risk_count: int
     broken_limit_up_yesterday_avg_return: Decimal | None
     hot_stock_close_above_avg_price_ratio: Decimal | None
     hot_stock_max_drawdown_median: Decimal | None
@@ -106,3 +110,4 @@ class MarketCloseReport:
     report_trade_date: date
     summary: str
     daily_rows: list[DailyReportRow]
+    data_quality_flags: tuple[str, ...] = ()

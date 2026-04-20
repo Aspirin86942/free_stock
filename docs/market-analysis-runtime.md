@@ -2,7 +2,7 @@
 
 ## 概述
 
-市场分析调度器是一个独立的盘后分析系统，负责：
+市场分析调度器由 `main.py scheduler` 子命令触发，负责：
 - 每日自动同步全市场日线数据到 MySQL
 - 计算市场宽度、赚钱效应、容错、情绪等指标
 - 生成最近 10 个交易日的分析报告
@@ -85,7 +85,7 @@ CREATE DATABASE market_data CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 启动常驻调度器，每日 19:15 自动执行盘后任务：
 
 ```bash
-python scheduler.py --config config/sim_account.yaml
+python main.py scheduler --config config/sim_account.yaml
 ```
 
 ### 方式 2：手动触发一次
@@ -93,7 +93,7 @@ python scheduler.py --config config/sim_account.yaml
 手动触发一次盘后任务（用于测试或补数）：
 
 ```bash
-python scheduler.py --config config/sim_account.yaml --once
+python main.py scheduler --config config/sim_account.yaml --once
 ```
 
 ## 数据同步逻辑
@@ -197,10 +197,10 @@ python scheduler.py --config config/sim_account.yaml --once
 
 ## 与自动交易的关系
 
-- `scheduler.py` 和 `main.py` 是两个独立入口
-- `main.py` 仍然用于自动交易执行
-- `scheduler.py` 只负责盘后分析和调度
-- 两者可以同时运行，互不干扰
+- 统一入口为 `main.py`
+- 自动交易执行：`main.py trade ...`
+- 盘后调度执行：`main.py scheduler ...`
+- 当前阶段 `trade.enabled=true` 仅占位告警，不会由调度器自动执行真实交易
 
 ## 配置项说明
 
@@ -228,16 +228,7 @@ python scheduler.py --config config/sim_account.yaml --once
 2. **数据库索引**：已自动创建必要索引
 3. **并发控制**：调度器设置 `max_instances=1`，避免重复执行
 
-## 未来扩展
+## 指标说明
 
-当前版本的分析器返回占位数据，完整指标计算逻辑待实现：
-
-- `MarketBreadthAnalyzer`: 市场宽度指标
-- `MarketProfitEffectAnalyzer`: 赚钱效应指标
-- `MarketToleranceAnalyzer`: 容错指标
-- `MarketEmotionAnalyzer`: 情绪指标
-
-实现路径：
-1. 从 MySQL 读取日线数据
-2. 使用 pandas 进行向量化计算
-3. 返回结构化指标结果
+当前版本已基于 MySQL 事实表计算市场宽度、赚钱效应、容错与情绪指标。  
+受 `gm + MySQL` 数据源限制，部分口径采用 best-effort 近似，并在飞书消息中附带口径说明。

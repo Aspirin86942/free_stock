@@ -71,8 +71,16 @@ class MarketCloseReportBuilder:
 
         logger.info(f"报告生成完成，包含 {len(daily_rows)} 个交易日数据")
 
+        quality_flags: list[str] = []
+        if any(row.profit_effect.hot_stock_4d_avg_return is None for row in daily_rows):
+            quality_flags.append("部分热门股指标因换手率或历史窗口不足未计算")
+        if any(row.tolerance.hot_stock_close_above_avg_price_ratio is None for row in daily_rows):
+            quality_flags.append("部分容错指标因样本不足未计算")
+        quality_flags.append("ST历史状态按可得数据计算，相关口径为 best-effort")
+
         return MarketCloseReport(
             report_trade_date=report_trade_date,
             summary=summary,
             daily_rows=daily_rows,
+            data_quality_flags=tuple(quality_flags),
         )

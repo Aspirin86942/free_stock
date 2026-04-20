@@ -236,6 +236,34 @@ def _parse_sell_quantity_ratio(value: Any, field_name: str) -> Decimal:
     return result
 
 
+def _parse_bool(value: Any, field_name: str) -> bool:
+    """把配置值解析成布尔值，避免字符串 'false' 被 Python 视为 True。"""
+    if isinstance(value, bool):
+        return value
+
+    if isinstance(value, int):
+        if value in (0, 1):
+            return bool(value)
+        _raise(
+            "config.invalid_bool",
+            f"字段 {field_name} 必须是布尔值",
+            context={"field": field_name, "value": str(value)},
+        )
+
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "y", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "n", "off"}:
+            return False
+
+    _raise(
+        "config.invalid_bool",
+        f"字段 {field_name} 必须是布尔值",
+        context={"field": field_name, "value": str(value)},
+    )
+
+
 def _resolve_env_recursive(value: Any, field_path: str) -> Any:
     """递归解析嵌套字典中的环境变量引用。"""
     if isinstance(value, dict):
@@ -347,7 +375,7 @@ def load_runtime_config(config_path: Path) -> RuntimeConfig:
         _raise("config.invalid_section", "trade 配置块必须是字典结构")
 
     trade_config = TradeConfig(
-        enabled=bool(trade_raw.get("enabled", False)),
+        enabled=_parse_bool(trade_raw.get("enabled", False), "trade.enabled"),
         account_id=str(trade_raw.get("account_id", "")),
         strategy_name=str(trade_raw.get("strategy_name", "gmtrade-live-auto-sell")),
         poll_interval_seconds=_parse_positive_int(
@@ -373,7 +401,7 @@ def load_runtime_config(config_path: Path) -> RuntimeConfig:
         _raise("config.invalid_section", "market_analysis 配置块必须是字典结构")
 
     market_analysis_config = MarketAnalysisConfig(
-        enabled=bool(ma_raw.get("enabled", True)),
+        enabled=_parse_bool(ma_raw.get("enabled", True), "market_analysis.enabled"),
         universe=str(ma_raw.get("universe", "ashare_main_gem_star")),
         history_years=int(ma_raw.get("history_years", 3)),
         recent_trade_days=int(ma_raw.get("recent_trade_days", 10)),
@@ -408,7 +436,7 @@ def load_runtime_config(config_path: Path) -> RuntimeConfig:
         _raise("config.invalid_section", "scheduler 配置块必须是字典结构")
 
     scheduler_config = SchedulerConfig(
-        enabled=bool(scheduler_raw.get("enabled", True)),
+        enabled=_parse_bool(scheduler_raw.get("enabled", True), "scheduler.enabled"),
         retry_interval_minutes=int(scheduler_raw.get("retry_interval_minutes", 10)),
         max_attempts=int(scheduler_raw.get("max_attempts", 3)),
     )

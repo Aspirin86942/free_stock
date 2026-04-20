@@ -6,7 +6,7 @@ import logging
 from datetime import date
 from decimal import Decimal
 
-from gmtrade_live.market_models import ProfitEffectMetrics
+from gmtrade_live.market_models import DailyBar, ProfitEffectMetrics
 from gmtrade_live.repositories.mysql_market_repository import MySQLMarketRepository
 
 logger = logging.getLogger(__name__)
@@ -20,11 +20,135 @@ class MarketProfitEffectAnalyzer:
 
     def calculate(self, trade_date: date) -> ProfitEffectMetrics:
         """计算指定交易日的赚钱效应指标。"""
-        # TODO: 实现完整的赚钱效应指标计算
         logger.info(f"计算赚钱效应指标: {trade_date}")
 
-        return ProfitEffectMetrics(
-            limit_up_yesterday_avg_return=Decimal("0.03"),
-            consecutive_limit_up_yesterday_avg_return=Decimal("0.05"),
-            hot_stock_4d_avg_return=Decimal("0.08"),
+        recent_dates = self.repository.get_recent_trade_dates(trade_date, 3)
+        if len(recent_dates) < 2:
+            return ProfitEffectMetrics(
+                limit_up_yesterday_avg_return=None,
+                consecutive_limit_up_yesterday_avg_return=None,
+                hot_stock_4d_avg_return=None,
+            )
+
+        previous_trade_date = recent_dates[-2]
+        previous_bars = self.repository.get_daily_bars_by_date(previous_trade_date)
+        current_bars = self.repository.get_daily_bars_by_date(trade_date)
+        current_by_symbol = {bar.symbol: bar for bar in current_bars}
+
+        limit_up_symbols = [
+            bar.symbol
+            for bar in previous_bars
+            if bar.has_trade and not bar.suspended and self._is_limit_up(bar)
+        ]
+        limit_up_avg_return = self._average_return(limit_up_symbols, previous_bars, current_by_symbol)
+
+        consecutive_limit_up_avg_return: Decimal | None = None
+        if len(recent_dates) >= 3:
+            pre_previous_trade_date = recent_dates[-3]
+            pre_previous_bars = self.repository.get_daily_bars_by_date(pre_previous_trade_date)
+            pre_previous_by_symbol = {bar.symbol: bar for bar in pre_previous_bars}
+            consecutive_symbols = [
+                symbol
+                for symbol in limit_up_symbols
+                if symbol in pre_previous_by_symbol and self._is_limit_up(pre_previous_by_symbol[symbol])
+            ]
+            consecutive_limit_up_avg_return = self._average_return(
+                consecutive_symbols, previous_bars, current_by_symbol
+            )
+
+        hot_stock_4d_avg_return = self._calculate_hot_stock_4d_avg_return(
+            trade_date=trade_date,
+            previous_trade_date=previous_trade_date,
+            previous_bars=previous_bars,
         )
+
+        return ProfitEffectMetrics(
+            limit_up_yesterday_avg_return=limit_up_avg_return,
+            consecutive_limit_up_yesterday_avg_return=consecutive_limit_up_avg_return,
+            hot_stock_4d_avg_return=hot_stock_4d_avg_return,
+        )
+
+    def _average_return(
+        self,
+        symbols: list[str],
+        previous_bars: list[DailyBar],
+        current_by_symbol: dict[str, DailyBar],
+    ) -> Decimal | None:
+        previous_by_symbol = {bar.symbol: bar for bar in previous_bars}
+        returns: list[Decimal] = []
+
+        for symbol in symbols:
+            previous_bar = previous_by_symbol.get(symbol)
+            current_bar = current_by_symbol.get(symbol)
+            if (
+                previous_bar is None
+                or current_bar is None
+                or previous_bar.close <= Decimal("0")
+                or not current_bar.has_trade
+                or current_bar.suspended
+            ):
+                continue
+            returns.append((current_bar.close - previous_bar.close) / previous_bar.close)
+
+        if not returns:
+            return None
+        return sum(returns) / Decimal(len(returns))
+
+    def _is_limit_up(self, bar: DailyBar) -> bool:
+        if bar.pre_close <= Decimal("0"):
+            return False
+        pct_change = (bar.close - bar.pre_close) / bar.pre_close
+        limit_threshold = Decimal("0.05") if bar.is_st else Decimal("0.10")
+        return pct_change >= limit_threshold * Decimal("0.99")
+
+    def _is_turnover_over_10(self, turnover_rate: Decimal | None) -> bool:
+        if turnover_rate is None:
+            return False
+        # 兼容两种口径：百分比(10)与比例(0.10)
+        if turnover_rate > Decimal("1"):
+            return turnover_rate > Decimal("10")
+        return turnover_rate > Decimal("0.10")
+
+    def _calculate_hot_stock_4d_avg_return(
+        self,
+        *,
+        trade_date: date,
+        previous_trade_date: date,
+        previous_bars: list[DailyBar],
+    ) -> Decimal | None:
+        hot_symbols = [
+            bar.symbol
+            for bar in previous_bars
+            if (
+                bar.has_trade
+                and not bar.suspended
+                and not bar.is_st
+                and bar.close > Decimal("10")
+                and self._is_turnover_over_10(bar.turnover_rate)
+            )
+        ]
+        if not hot_symbols:
+            return None
+
+        recent_dates = self.repository.get_recent_trade_dates(trade_date, 5)
+        if len(recent_dates) < 5:
+            return None
+        start_trade_date = recent_dates[-5]
+
+        history_bars = self.repository.get_daily_bars(hot_symbols, start_trade_date, trade_date)
+        bars_by_symbol: dict[str, dict[date, DailyBar]] = {}
+        for bar in history_bars:
+            bars_by_symbol.setdefault(bar.symbol, {})[bar.trade_date] = bar
+
+        returns: list[Decimal] = []
+        for symbol in hot_symbols:
+            symbol_bars = bars_by_symbol.get(symbol, {})
+            start_bar = symbol_bars.get(start_trade_date)
+            end_bar = symbol_bars.get(trade_date)
+            if start_bar is None or end_bar is None or start_bar.close <= Decimal("0"):
+                continue
+            returns.append((end_bar.close - start_bar.close) / start_bar.close)
+
+        if not returns:
+            return None
+        return sum(returns) / Decimal(len(returns))

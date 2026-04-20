@@ -3,7 +3,6 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -21,25 +20,36 @@ def test_ensure_local_src_on_path_adds_repo_src_when_package_unavailable(
     assert sys.path[0] == str(Path(main.__file__).resolve().parent / "src")
 
 
-def test_build_parser_accepts_config_argument() -> None:
+def test_build_parser_accepts_trade_config_argument() -> None:
     parser = main.build_parser()
-    args = parser.parse_args(["--config", "config/sim_account.yaml"])
+    args = parser.parse_args(["trade", "--config", "config/sim_account.yaml"])
 
     assert Path(args.config) == Path("config/sim_account.yaml")
+    assert args.command == "trade"
 
 
-def test_parse_cli_args_defaults_to_auto_sell() -> None:
-    args = main.parse_cli_args(["--config", "config/sim_account.yaml"])
+def test_build_parser_accepts_scheduler_config_argument() -> None:
+    parser = main.build_parser()
+    args = parser.parse_args(["scheduler", "--config", "config/sim_account.yaml"])
 
+    assert Path(args.config) == Path("config/sim_account.yaml")
+    assert args.command == "scheduler"
+
+
+def test_parse_trade_cli_args_defaults() -> None:
+    args = main.parse_cli_args(["trade", "--config", "config/sim_account.yaml"])
+
+    assert args.command == "trade"
     assert args.config == "config/sim_account.yaml"
     assert args.once is False
     assert args.max_rounds is None
     assert args.reconcile_timeout_seconds == 5
 
 
-def test_parse_cli_args_accepts_once_mode() -> None:
+def test_parse_trade_cli_args_accepts_once_mode() -> None:
     args = main.parse_cli_args(
         [
+            "trade",
             "--config",
             "config/sim_account.yaml",
             "--once",
@@ -50,9 +60,10 @@ def test_parse_cli_args_accepts_once_mode() -> None:
     assert args.max_rounds is None
 
 
-def test_parse_cli_args_accepts_max_rounds() -> None:
+def test_parse_trade_cli_args_accepts_max_rounds() -> None:
     args = main.parse_cli_args(
         [
+            "trade",
             "--config",
             "config/sim_account.yaml",
             "--max-rounds",
@@ -64,10 +75,11 @@ def test_parse_cli_args_accepts_max_rounds() -> None:
     assert args.max_rounds == 3
 
 
-def test_parse_cli_args_rejects_once_and_max_rounds() -> None:
+def test_parse_trade_cli_args_rejects_once_and_max_rounds() -> None:
     with pytest.raises(SystemExit):
         main.parse_cli_args(
             [
+                "trade",
                 "--config",
                 "config/sim_account.yaml",
                 "--once",
@@ -77,10 +89,11 @@ def test_parse_cli_args_rejects_once_and_max_rounds() -> None:
         )
 
 
-def test_parse_cli_args_rejects_non_positive_max_rounds() -> None:
+def test_parse_trade_cli_args_rejects_non_positive_max_rounds() -> None:
     with pytest.raises(SystemExit):
         main.parse_cli_args(
             [
+                "trade",
                 "--config",
                 "config/sim_account.yaml",
                 "--max-rounds",
@@ -93,6 +106,7 @@ def test_parse_cli_args_rejects_mode_argument(capsys: pytest.CaptureFixture[str]
     with pytest.raises(SystemExit):
         main.parse_cli_args(
             [
+                "trade",
                 "--config",
                 "config/sim_account.yaml",
                 "--mode",
@@ -104,9 +118,10 @@ def test_parse_cli_args_rejects_mode_argument(capsys: pytest.CaptureFixture[str]
     assert "unrecognized arguments: --mode legacy" in captured.err
 
 
-def test_parse_cli_args_accepts_reconcile_timeout_seconds() -> None:
+def test_parse_trade_cli_args_accepts_reconcile_timeout_seconds() -> None:
     args = main.parse_cli_args(
         [
+            "trade",
             "--config",
             "config/sim_account.yaml",
             "--reconcile-timeout-seconds",
@@ -117,33 +132,61 @@ def test_parse_cli_args_accepts_reconcile_timeout_seconds() -> None:
     assert args.reconcile_timeout_seconds == 7
 
 
-def test_main_dispatches_to_auto_sell(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured: dict[str, object] = {}
-
-    def _run_auto_sell(**kwargs: object) -> int:
-        captured.update(kwargs)
-        return 0
-
-    runner = SimpleNamespace(
-        run_auto_sell=_run_auto_sell,
-    )
-
-    monkeypatch.setitem(sys.modules, "gmtrade_live.app_runner", runner)
-    monkeypatch.setattr(
-        sys,
-        "argv",
+def test_parse_scheduler_cli_args_accepts_once() -> None:
+    args = main.parse_cli_args(
         [
-            "main.py",
+            "scheduler",
             "--config",
             "config/sim_account.yaml",
             "--once",
-            "--reconcile-timeout-seconds",
-            "7",
-        ],
+        ]
     )
 
-    assert main.main() == 0
-    assert captured["config_path"] == Path("config/sim_account.yaml")
-    assert captured["once"] is True
-    assert captured["max_rounds"] is None
-    assert captured["reconcile_timeout_seconds"] == 7
+    assert args.command == "scheduler"
+    assert args.once is True
+
+
+def test_main_dispatches_to_trade_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    def _fake_trade(args):
+        calls.append({"command": args.command, "config": args.config})
+        return 0
+
+    monkeypatch.setattr(main, "_run_trade_command", _fake_trade)
+    monkeypatch.setattr(main, "_run_scheduler_command", lambda args: 1)
+
+    assert (
+        main.main(
+            [
+                "trade",
+                "--config",
+                "config/sim_account.yaml",
+            ]
+        )
+        == 0
+    )
+    assert calls == [{"command": "trade", "config": "config/sim_account.yaml"}]
+
+
+def test_main_dispatches_to_scheduler_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+
+    def _fake_scheduler(args):
+        calls.append({"command": args.command, "config": args.config})
+        return 0
+
+    monkeypatch.setattr(main, "_run_trade_command", lambda args: 1)
+    monkeypatch.setattr(main, "_run_scheduler_command", _fake_scheduler)
+
+    assert (
+        main.main(
+            [
+                "scheduler",
+                "--config",
+                "config/sim_account.yaml",
+            ]
+        )
+        == 0
+    )
+    assert calls == [{"command": "scheduler", "config": "config/sim_account.yaml"}]

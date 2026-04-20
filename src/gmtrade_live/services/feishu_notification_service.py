@@ -45,32 +45,75 @@ class FeishuNotificationService:
             ) from exc
 
     def _build_message(self, report: MarketCloseReport) -> dict[str, Any]:
-        """构建飞书消息格式。"""
+        """构建飞书消息格式（纯文本）。"""
+        lines = []
+
         # 标题
-        title = f"📊 市场分析日报 - {report.report_trade_date}"
+        lines.append(f"📊 市场分析日报 {report.report_trade_date}")
+        lines.append("")
 
         # 摘要
-        summary_text = f"**{report.summary}**"
+        lines.append(report.summary)
+        lines.append("")
 
-        # 明细表（最近 10 个交易日）
-        table_rows = ["| 交易日 | 上涨家数 | 下跌家数 | 上涨占比 | 成交金额(亿) |"]
-        table_rows.append("|--------|----------|----------|----------|--------------|")
+        # 表格 - 最近10个交易日趋势
+        lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        lines.append("交易日         上涨   下跌    占比   成交额(万亿)  涨停  跌停")
+        lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
+        if not report.daily_rows:
+            lines.append("暂无可展示数据（可能尚未完成同步或无有效交易样本）")
+            lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            return {
+                "msg_type": "text",
+                "content": {"text": "\n".join(lines)},
+            }
 
         for row in report.daily_rows:
-            table_rows.append(
-                f"| {row.trade_date} "
-                f"| {row.breadth.up_count} "
-                f"| {row.breadth.down_count} "
-                f"| {row.breadth.up_ratio:.2%} "
-                f"| {row.breadth.total_amount / 100000000:.0f} |"
+            up_ratio = float(row.breadth.up_ratio)
+            # 添加涨跌标记
+            if up_ratio >= 0.6:
+                marker = "🔴"
+            elif up_ratio >= 0.4:
+                marker = "⚪"
+            else:
+                marker = "🟢"
+
+            lines.append(
+                f"{row.trade_date} {marker}  "
+                f"{row.breadth.up_count:>4}  "
+                f"{row.breadth.down_count:>4}  "
+                f"{row.breadth.up_ratio:>6.2%}  "
+                f"{row.breadth.total_amount / 1000000000000:>10.2f}  "
+                f"{row.breadth.limit_up_count:>4}  "
+                f"{row.breadth.limit_down_count:>4}"
             )
 
-        table_text = "\n".join(table_rows)
+        lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        lines.append("")
 
-        # 飞书消息格式（Markdown）
-        content = f"{title}\n\n{summary_text}\n\n{table_text}"
+        # 最新交易日详细指标
+        latest_row = report.daily_rows[-1]
+        lines.append("📈 市场情绪指标（最新交易日）")
+        lines.append(f"  • 涨幅 >9.5%: {latest_row.emotion.pct_above_9_5_count}家")
+        lines.append(f"  • 跌幅 <-9.5%: {latest_row.emotion.pct_below_minus_9_5_count}家")
+        lines.append("")
+
+        lines.append("⚠️ 风险提示")
+        lines.append(f"  • ST股票: {latest_row.tolerance.st_count}家")
+        if latest_row.tolerance.delisting_risk_count > 0:
+            lines.append(f"  • 退市风险: {latest_row.tolerance.delisting_risk_count}家")
+        lines.append("")
+
+        if report.data_quality_flags:
+            lines.append("🧪 口径说明")
+            for flag in report.data_quality_flags:
+                lines.append(f"  • {flag}")
+            lines.append("")
+
+        lines.append("🔴 大涨(≥60%)  ⚪ 震荡(40-60%)  🟢 大跌(<40%)")
 
         return {
             "msg_type": "text",
-            "content": {"text": content},
+            "content": {"text": "\n".join(lines)},
         }

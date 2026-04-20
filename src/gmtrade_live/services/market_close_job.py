@@ -32,6 +32,7 @@ class MarketCloseJobResult:
 def run_market_close_job(config: RuntimeConfig) -> MarketCloseJobResult:
     """执行盘后任务：补数 -> 分析 -> 飞书推送。"""
     logger.info("开始执行盘后任务")
+    repository: MySQLMarketRepository | None = None
 
     try:
         # 1. 初始化组件
@@ -69,6 +70,28 @@ def run_market_close_job(config: RuntimeConfig) -> MarketCloseJobResult:
         )
         logger.info(f"报告生成完成: {report.report_trade_date}")
 
+        if not report.daily_rows:
+            logger.warning("报告明细为空，跳过飞书通知")
+            return MarketCloseJobResult(
+                success=True,
+                message="盘后任务执行成功（报告无明细，跳过通知）",
+                sync_inserted_rows=sync_result.inserted_rows,
+                report_trade_date=str(sync_result.latest_trade_date),
+            )
+
+        last_sent_trade_date = repository.get_last_success_trade_date("market_close_report_sent")
+        if last_sent_trade_date == sync_result.latest_trade_date:
+            logger.info(
+                "当前交易日日报已发送，跳过重复发送",
+                extra={"trade_date": str(sync_result.latest_trade_date)},
+            )
+            return MarketCloseJobResult(
+                success=True,
+                message="盘后任务执行成功（已发送过当日日报，跳过重复发送）",
+                sync_inserted_rows=sync_result.inserted_rows,
+                report_trade_date=str(sync_result.latest_trade_date),
+            )
+
         # 打印报告内容到控制台
         print("\n" + "="*80)
         print(f"📊 市场分析日报 - {report.report_trade_date}")
@@ -91,12 +114,13 @@ def run_market_close_job(config: RuntimeConfig) -> MarketCloseJobResult:
         if config.feishu.webhook and not config.feishu.webhook.endswith("/placeholder"):
             feishu_service = FeishuNotificationService(config.feishu)
             feishu_service.send_market_close_report(report)
+            repository.save_last_success_trade_date(
+                "market_close_report_sent",
+                sync_result.latest_trade_date,
+            )
             logger.info("飞书通知发送完成")
         else:
             logger.info("跳过飞书通知（未配置有效 webhook）")
-
-        # 5. 清理资源
-        repository.close()
 
         return MarketCloseJobResult(
             success=True,
@@ -113,3 +137,6 @@ def run_market_close_job(config: RuntimeConfig) -> MarketCloseJobResult:
             sync_inserted_rows=0,
             report_trade_date="",
         )
+    finally:
+        if repository is not None:
+            repository.close()

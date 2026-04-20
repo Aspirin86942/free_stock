@@ -5,17 +5,17 @@
 自动卖出执行入口（需要先启动掘金终端）：
 
 ```bash
-conda run -n stock_analysis python main.py --config config/sim_account.yaml
+conda run -n stock_analysis python main.py trade --config config/sim_account.yaml
 ```
 
 可选参数：
 
 ```bash
 # 单轮执行
-conda run -n stock_analysis python main.py --config config/sim_account.yaml --once
+conda run -n stock_analysis python main.py trade --config config/sim_account.yaml --once
 
 # 连续 3 轮执行
-conda run -n stock_analysis python main.py --config config/sim_account.yaml --max-rounds 3
+conda run -n stock_analysis python main.py trade --config config/sim_account.yaml --max-rounds 3
 ```
 
 ## Debug 工具
