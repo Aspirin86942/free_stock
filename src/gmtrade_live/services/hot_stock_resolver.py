@@ -16,7 +16,7 @@ class HotStockRepository(Protocol):
     """热门股解析所需的最小仓储接口。"""
 
     def get_recent_trade_dates(self, end_date: date, limit: int) -> list[date]:
-        """获取最近交易日列表。"""
+        """获取最近交易日列表，包含 end_date 且按升序排列。"""
 
     def get_daily_bars_by_date(self, trade_date: date) -> list[DailyBar]:
         """获取指定交易日的日线数据。"""
@@ -34,20 +34,26 @@ class HotStockResolver:
     def __init__(self, repository: HotStockRepository) -> None:
         self.repository = repository
 
-    def resolve(self, analysis_date: date) -> set[str]:
-        """解析分析日对应的热门股列表。
+    def resolve(self, trade_date: date) -> set[str]:
+        """解析交易日对应的热门股列表。
 
-        逻辑以分析日的前一交易日 T-1 为基准，保守跳过任何缺失数据。
+        逻辑以交易日 T 的前一交易日 T-1 为基准，保守跳过任何缺失数据。
         """
         logger.info(
             "开始解析热门股",
-            extra={"analysis_date": str(analysis_date)},
+            extra={"trade_date": str(trade_date)},
         )
-        recent_trade_dates = self.repository.get_recent_trade_dates(analysis_date, 2)
+        recent_trade_dates = self.repository.get_recent_trade_dates(trade_date, 2)
+        if not recent_trade_dates or recent_trade_dates[-1] != trade_date:
+            logger.info(
+                "热门股解析提前结束：输入日期不是交易日或最近交易日列表为空",
+                extra={"trade_date": str(trade_date)},
+            )
+            return set()
         if len(recent_trade_dates) < 2:
             logger.info(
                 "热门股解析提前结束：缺少前一交易日",
-                extra={"analysis_date": str(analysis_date)},
+                extra={"trade_date": str(trade_date)},
             )
             return set()
 
@@ -57,7 +63,7 @@ class HotStockResolver:
             logger.info(
                 "热门股解析提前结束：前一交易日日线为空",
                 extra={
-                    "analysis_date": str(analysis_date),
+                    "trade_date": str(trade_date),
                     "previous_trade_date": str(previous_trade_date),
                 },
             )
@@ -77,7 +83,7 @@ class HotStockResolver:
             logger.info(
                 "热门股解析提前结束：上市日期映射为空",
                 extra={
-                    "analysis_date": str(analysis_date),
+                    "trade_date": str(trade_date),
                     "previous_trade_date": str(previous_trade_date),
                 },
             )
@@ -96,7 +102,7 @@ class HotStockResolver:
         logger.info(
             "热门股解析完成",
             extra={
-                "analysis_date": str(analysis_date),
+                "trade_date": str(trade_date),
                 "previous_trade_date": str(previous_trade_date),
                 "hot_stock_count": len(resolved_symbols),
             },

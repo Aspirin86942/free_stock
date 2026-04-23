@@ -61,18 +61,18 @@ def _bar(
     )
 
 
-def _build_trade_dates() -> list[date]:
+def _build_sparse_trade_dates(count: int = 251) -> list[date]:
+    """构造明显稀疏的交易日序列，避免用连续自然日近似交易日。"""
     start_date = date(2025, 1, 1)
-    return [start_date + timedelta(days=offset) for offset in range(251)]
+    return [start_date + timedelta(days=offset * 2) for offset in range(count)]
 
 
 def test_hot_stock_resolver_excludes_symbols_listed_for_fewer_than_250_trade_days() -> None:
-    trade_dates = _build_trade_dates()
-    analysis_date = trade_dates[-1]
+    trade_dates = _build_sparse_trade_dates()
+    trade_date = trade_dates[-1]
     previous_trade_date = trade_dates[-2]
-    current_trade_date = trade_dates[-1]
-    keeper_listed_date = trade_dates[0]
-    dropped_listed_date = trade_dates[1]
+    keeper_listed_date = trade_dates[1]
+    dropped_listed_date = trade_dates[2]
 
     repository = _FakeRepository(
         trade_dates=trade_dates,
@@ -81,20 +81,6 @@ def test_hot_stock_resolver_excludes_symbols_listed_for_fewer_than_250_trade_day
                 _bar(symbol="KEEP", trade_date=previous_trade_date),
                 _bar(symbol="DROP", trade_date=previous_trade_date),
             ],
-            current_trade_date: [
-                _bar(
-                    symbol="KEEP",
-                    trade_date=current_trade_date,
-                    close="9.8",
-                    turnover_rate="12",
-                ),
-                _bar(
-                    symbol="DROP",
-                    trade_date=current_trade_date,
-                    close="9.8",
-                    turnover_rate="12",
-                ),
-            ]
         },
         listed_date_map={
             "KEEP": keeper_listed_date,
@@ -104,14 +90,13 @@ def test_hot_stock_resolver_excludes_symbols_listed_for_fewer_than_250_trade_day
 
     resolver = HotStockResolver(repository)
 
-    assert resolver.resolve(analysis_date) == {"KEEP"}
+    assert resolver.resolve(trade_date) == set()
 
 
 def test_hot_stock_resolver_keeps_symbols_listed_for_exactly_250_trade_days() -> None:
-    trade_dates = _build_trade_dates()
-    analysis_date = trade_dates[-1]
+    trade_dates = _build_sparse_trade_dates()
+    trade_date = trade_dates[-1]
     previous_trade_date = trade_dates[-2]
-    current_trade_date = trade_dates[-1]
     listed_date = trade_dates[0]
 
     repository = _FakeRepository(
@@ -119,14 +104,6 @@ def test_hot_stock_resolver_keeps_symbols_listed_for_exactly_250_trade_days() ->
         bars_by_date={
             previous_trade_date: [
                 _bar(symbol="KEEP", trade_date=previous_trade_date),
-            ],
-            current_trade_date: [
-                _bar(
-                    symbol="KEEP",
-                    trade_date=current_trade_date,
-                    close="9.8",
-                    turnover_rate="12",
-                ),
             ]
         },
         listed_date_map={
@@ -136,12 +113,39 @@ def test_hot_stock_resolver_keeps_symbols_listed_for_exactly_250_trade_days() ->
 
     resolver = HotStockResolver(repository)
 
-    assert resolver.resolve(analysis_date) == {"KEEP"}
+    assert resolver.resolve(trade_date) == {"KEEP"}
+
+
+def test_hot_stock_resolver_accepts_percent_turnover_rate_ratio_0_11() -> None:
+    trade_dates = _build_sparse_trade_dates()
+    trade_date = trade_dates[-1]
+    previous_trade_date = trade_dates[-2]
+
+    repository = _FakeRepository(
+        trade_dates=trade_dates,
+        bars_by_date={
+            previous_trade_date: [
+                _bar(
+                    symbol="KEEP",
+                    trade_date=previous_trade_date,
+                    close="11.5",
+                    turnover_rate="0.11",
+                ),
+            ],
+        },
+        listed_date_map={
+            "KEEP": trade_dates[0],
+        },
+    )
+
+    resolver = HotStockResolver(repository)
+
+    assert resolver.resolve(trade_date) == {"KEEP"}
 
 
 def test_hot_stock_resolver_excludes_symbol_without_listed_date() -> None:
-    trade_dates = _build_trade_dates()
-    analysis_date = trade_dates[-1]
+    trade_dates = _build_sparse_trade_dates()
+    trade_date = trade_dates[-1]
     previous_trade_date = trade_dates[-2]
 
     repository = _FakeRepository(
@@ -156,7 +160,28 @@ def test_hot_stock_resolver_excludes_symbol_without_listed_date() -> None:
 
     resolver = HotStockResolver(repository)
 
-    assert resolver.resolve(analysis_date) == set()
+    assert resolver.resolve(trade_date) == set()
+
+
+def test_hot_stock_resolver_returns_empty_set_when_trade_date_is_not_a_trade_day(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO)
+    trade_dates = _build_sparse_trade_dates()
+    non_trade_date = trade_dates[-1] + timedelta(days=1)
+    repository = _FakeRepository(
+        trade_dates=trade_dates,
+        bars_by_date={},
+        listed_date_map={},
+    )
+
+    resolver = HotStockResolver(repository)
+
+    result = resolver.resolve(non_trade_date)
+
+    assert result == set()
+    assert "开始解析热门股" in caplog.text
+    assert "输入日期不是交易日或最近交易日列表为空" in caplog.text
 
 
 @pytest.mark.parametrize(
@@ -167,6 +192,12 @@ def test_hot_stock_resolver_excludes_symbol_without_listed_date() -> None:
             {},
             {},
             "热门股解析提前结束：缺少前一交易日",
+        ),
+        (
+            [],
+            {},
+            {},
+            "热门股解析提前结束：输入日期不是交易日或最近交易日列表为空",
         ),
         (
             [date(2025, 1, 1), date(2025, 1, 2)],
@@ -200,7 +231,7 @@ def test_hot_stock_resolver_logs_early_exit_reasons(
     expected_log: str,
 ) -> None:
     caplog.set_level(logging.INFO)
-    analysis_date = trade_dates[-1]
+    trade_date = trade_dates[-1] if trade_dates else date(2025, 1, 1)
     repository = _FakeRepository(
         trade_dates=trade_dates,
         bars_by_date=bars_by_date,
@@ -209,7 +240,7 @@ def test_hot_stock_resolver_logs_early_exit_reasons(
 
     resolver = HotStockResolver(repository)
 
-    result = resolver.resolve(analysis_date)
+    result = resolver.resolve(trade_date)
 
     assert result == set()
     assert "开始解析热门股" in caplog.text
