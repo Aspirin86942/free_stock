@@ -435,6 +435,80 @@ class MySQLMarketRepository:
                 context={},
             ) from exc
 
+    def get_security_name_map(self, symbols: list[str]) -> dict[str, str]:
+        """按 symbol 批量查询证券名称映射。"""
+        if not self._connection:
+            raise RepositoryError(
+                code="repository.not_connected",
+                message="数据库未连接",
+                retryable=False,
+                context={},
+            )
+
+        if not symbols:
+            return {}
+
+        placeholders = ",".join(["%s"] * len(symbols))
+        sql = f"""
+            SELECT symbol, name
+            FROM market_security_master
+            WHERE symbol IN ({placeholders})
+        """
+        try:
+            with self._connection.cursor() as cursor:
+                cursor.execute(sql, tuple(symbols))
+                rows = cursor.fetchall()
+            return {
+                str(row["symbol"]): str(row["name"])
+                for row in rows
+                if row.get("symbol") is not None and row.get("name") is not None
+            }
+        except pymysql.Error as exc:
+            raise RepositoryError(
+                code="repository.query_failed",
+                message=f"查询证券名称映射失败: {exc}",
+                retryable=True,
+                context={"symbol_count": len(symbols)},
+            ) from exc
+
+    def get_security_listed_date_map(self, symbols: list[str]) -> dict[str, date]:
+        """按 symbol 批量查询证券上市日期映射。"""
+        if not self._connection:
+            raise RepositoryError(
+                code="repository.not_connected",
+                message="数据库未连接",
+                retryable=False,
+                context={},
+            )
+
+        if not symbols:
+            return {}
+
+        placeholders = ",".join(["%s"] * len(symbols))
+        sql = f"""
+            SELECT symbol, listed_date
+            FROM market_security_master
+            WHERE symbol IN ({placeholders})
+        """
+
+        try:
+            with self._connection.cursor() as cursor:
+                cursor.execute(sql, tuple(symbols))
+                rows = cursor.fetchall()
+            # 上层通常按 symbol 直接索引日期，这里保持一行一值的映射结构，避免额外转换成本。
+            return {
+                str(row["symbol"]): row["listed_date"]
+                for row in rows
+                if row.get("symbol") is not None and row.get("listed_date") is not None
+            }
+        except pymysql.Error as exc:
+            raise RepositoryError(
+                code="repository.query_failed",
+                message=f"查询证券上市日期映射失败: {exc}",
+                retryable=True,
+                context={"symbol_count": len(symbols)},
+            ) from exc
+
     def get_recent_trade_dates(self, end_date: date, limit: int) -> list[date]:
         """获取最近 N 个交易日（从 end_date 往前推）。"""
         if not self._connection:
@@ -465,6 +539,37 @@ class MySQLMarketRepository:
                 message=f"查询最近交易日失败: {exc}",
                 retryable=True,
                 context={"end_date": str(end_date), "limit": limit},
+            ) from exc
+
+    def get_trade_dates_between(self, start_date: date, end_date: date) -> list[date]:
+        """获取指定日期区间内的交易日列表，按时间顺序返回。"""
+        if not self._connection:
+            raise RepositoryError(
+                code="repository.not_connected",
+                message="数据库未连接",
+                retryable=False,
+                context={},
+            )
+
+        sql = """
+            SELECT DISTINCT trade_date
+            FROM market_daily_bar
+            WHERE trade_date BETWEEN %s AND %s
+            ORDER BY trade_date ASC
+        """
+
+        try:
+            with self._connection.cursor() as cursor:
+                cursor.execute(sql, (start_date, end_date))
+                rows = cursor.fetchall()
+            # 再做一次显式排序，避免上游或数据库层出现顺序波动时影响调用方。
+            return sorted(row["trade_date"] for row in rows)
+        except pymysql.Error as exc:
+            raise RepositoryError(
+                code="repository.query_failed",
+                message=f"查询区间交易日失败: {exc}",
+                retryable=True,
+                context={"start_date": str(start_date), "end_date": str(end_date)},
             ) from exc
 
     def get_latest_trade_date_in_daily_bar(self) -> date | None:
