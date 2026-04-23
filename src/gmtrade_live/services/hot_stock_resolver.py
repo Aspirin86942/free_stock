@@ -34,19 +34,34 @@ class HotStockResolver:
     def __init__(self, repository: HotStockRepository) -> None:
         self.repository = repository
 
-    def resolve(self, analysis_date: date) -> list[str]:
+    def resolve(self, analysis_date: date) -> set[str]:
         """解析分析日对应的热门股列表。
 
         逻辑以分析日的前一交易日 T-1 为基准，保守跳过任何缺失数据。
         """
+        logger.info(
+            "开始解析热门股",
+            extra={"analysis_date": str(analysis_date)},
+        )
         recent_trade_dates = self.repository.get_recent_trade_dates(analysis_date, 2)
         if len(recent_trade_dates) < 2:
-            return []
+            logger.info(
+                "热门股解析提前结束：缺少前一交易日",
+                extra={"analysis_date": str(analysis_date)},
+            )
+            return set()
 
-        previous_trade_date = recent_trade_dates[-1]
+        previous_trade_date = recent_trade_dates[-2]
         previous_bars = self.repository.get_daily_bars_by_date(previous_trade_date)
         if not previous_bars:
-            return []
+            logger.info(
+                "热门股解析提前结束：前一交易日日线为空",
+                extra={
+                    "analysis_date": str(analysis_date),
+                    "previous_trade_date": str(previous_trade_date),
+                },
+            )
+            return set()
 
         candidate_bars = [
             bar
@@ -54,22 +69,30 @@ class HotStockResolver:
             if self._is_hot_bar(bar)
         ]
         if not candidate_bars:
-            return []
+            return set()
 
         symbols = [bar.symbol for bar in candidate_bars]
         listed_date_map = self.repository.get_security_listed_date_map(symbols)
+        if not listed_date_map:
+            logger.info(
+                "热门股解析提前结束：上市日期映射为空",
+                extra={
+                    "analysis_date": str(analysis_date),
+                    "previous_trade_date": str(previous_trade_date),
+                },
+            )
+            return set()
 
-        hot_symbols: list[str] = []
+        hot_symbols: set[str] = set()
         for bar in candidate_bars:
             listed_date = listed_date_map.get(bar.symbol)
             if listed_date is None:
                 continue
             if not self._has_minimum_listed_trade_days(listed_date, previous_trade_date):
                 continue
-            hot_symbols.append(bar.symbol)
+            hot_symbols.add(bar.symbol)
 
-        # 热门股集合对后续分析只需要稳定、可复现的 symbol 列表，因此这里做一次排序。
-        resolved_symbols = sorted(dict.fromkeys(hot_symbols))
+        resolved_symbols = hot_symbols
         logger.info(
             "热门股解析完成",
             extra={
@@ -106,5 +129,12 @@ class HotStockResolver:
         """
         trade_dates = self.repository.get_trade_dates_between(listed_date, previous_trade_date)
         if not trade_dates:
+            logger.info(
+                "热门股解析提前结束：交易日列表为空",
+                extra={
+                    "listed_date": str(listed_date),
+                    "previous_trade_date": str(previous_trade_date),
+                },
+            )
             return False
         return len(trade_dates) >= 250
