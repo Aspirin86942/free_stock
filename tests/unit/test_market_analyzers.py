@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date
+from datetime import timedelta
 from decimal import Decimal
 
 from gmtrade_live.market_models import DailyBar
@@ -9,9 +10,24 @@ from gmtrade_live.services.market_profit_effect_analyzer import MarketProfitEffe
 from gmtrade_live.services.market_tolerance_analyzer import MarketToleranceAnalyzer
 
 
+class _FakeHotStockResolver:
+    def __init__(self, symbols: set[str]) -> None:
+        self._symbols = symbols
+
+    def resolve(self, trade_date: date) -> set[str]:
+        return self._symbols
+
+
 class _FakeRepository:
-    def __init__(self, bars: list[DailyBar]) -> None:
+    def __init__(
+        self,
+        bars: list[DailyBar],
+        security_name_map: dict[str, str] | None = None,
+        security_listed_date_map: dict[str, date] | None = None,
+    ) -> None:
         self._bars = bars
+        self._security_name_map = security_name_map or {}
+        self._security_listed_date_map = security_listed_date_map or {}
 
     def get_daily_bars_by_date(self, trade_date: date) -> list[DailyBar]:
         return [bar for bar in self._bars if bar.trade_date == trade_date]
@@ -32,6 +48,29 @@ class _FakeRepository:
             for bar in self._bars
             if bar.symbol in symbols_set and start_date <= bar.trade_date <= end_date
         ]
+
+    def get_security_name_map(self, symbols: list[str]) -> dict[str, str]:
+        return {
+            symbol: self._security_name_map[symbol]
+            for symbol in symbols
+            if symbol in self._security_name_map
+        }
+
+    def get_security_listed_date_map(self, symbols: list[str]) -> dict[str, date]:
+        return {
+            symbol: self._security_listed_date_map[symbol]
+            for symbol in symbols
+            if symbol in self._security_listed_date_map
+        }
+
+    def get_trade_dates_between(self, start_date: date, end_date: date) -> list[date]:
+        return sorted(
+            {
+                bar.trade_date
+                for bar in self._bars
+                if start_date <= bar.trade_date <= end_date
+            }
+        )
 
 
 def _bar(
@@ -93,8 +132,35 @@ def _build_bars() -> list[DailyBar]:
     ]
 
 
+def _build_sparse_trade_dates(count: int = 251) -> list[date]:
+    start_date = date(2025, 1, 1)
+    return [start_date + timedelta(days=offset * 2) for offset in range(count)]
+
+
+def _build_recent_hot_stock_bars(trade_dates: list[date]) -> list[DailyBar]:
+    d1, d2, d3, d4, d5 = trade_dates[-5:]
+    return [
+        _bar(symbol="NEW", trade_date=d1, close="10.0", pre_close="9.8", high="10.0", turnover_rate="8"),
+        _bar(symbol="NEW", trade_date=d2, close="10.4", pre_close="10.0", high="10.4", turnover_rate="9"),
+        _bar(symbol="NEW", trade_date=d3, close="10.8", pre_close="10.4", high="10.8", turnover_rate="9"),
+        _bar(symbol="NEW", trade_date=d4, close="12.0", pre_close="10.8", high="12.0", turnover_rate="12"),
+        _bar(
+            symbol="NEW",
+            trade_date=d5,
+            close="13.0",
+            pre_close="12.0",
+            high="13.5",
+            amount="1200",
+            turnover_rate="9",
+        ),
+    ]
+
+
 def test_profit_effect_analyzer_calculates_from_repository_data() -> None:
-    analyzer = MarketProfitEffectAnalyzer(_FakeRepository(_build_bars()))  # type: ignore[arg-type]
+    analyzer = MarketProfitEffectAnalyzer(
+        _FakeRepository(_build_bars()),
+        hot_stock_resolver=_FakeHotStockResolver({"AAA"}),
+    )  # type: ignore[arg-type]
     metrics = analyzer.calculate(date(2026, 4, 20))
 
     assert metrics.limit_up_yesterday_avg_return is not None
@@ -104,13 +170,62 @@ def test_profit_effect_analyzer_calculates_from_repository_data() -> None:
     assert metrics.hot_stock_4d_avg_return > Decimal("0")
 
 
+def test_profit_effect_analyzer_excludes_hot_stock_listed_for_fewer_than_250_trade_days() -> None:
+    trade_dates = _build_sparse_trade_dates()
+    analyzer = MarketProfitEffectAnalyzer(
+        _FakeRepository(
+            _build_recent_hot_stock_bars(trade_dates),
+            security_listed_date_map={"NEW": trade_dates[2]},
+        )
+    )  # type: ignore[arg-type]
+
+    metrics = analyzer.calculate(trade_dates[-1])
+
+    assert metrics.hot_stock_4d_avg_return is None
+
+
 def test_tolerance_analyzer_calculates_broken_limit_and_hot_stock_metrics() -> None:
-    analyzer = MarketToleranceAnalyzer(_FakeRepository(_build_bars()))  # type: ignore[arg-type]
+    analyzer = MarketToleranceAnalyzer(
+        _FakeRepository(_build_bars()),
+        hot_stock_resolver=_FakeHotStockResolver({"AAA"}),
+    )  # type: ignore[arg-type]
     metrics = analyzer.calculate(date(2026, 4, 20))
 
     assert metrics.broken_limit_up_yesterday_avg_return is not None
     assert metrics.hot_stock_close_above_avg_price_ratio is not None
     assert metrics.hot_stock_max_drawdown_median is not None
+
+
+def test_tolerance_analyzer_excludes_hot_stock_listed_for_fewer_than_250_trade_days() -> None:
+    trade_dates = _build_sparse_trade_dates()
+    analyzer = MarketToleranceAnalyzer(
+        _FakeRepository(
+            _build_recent_hot_stock_bars(trade_dates),
+            security_listed_date_map={"NEW": trade_dates[2]},
+        )
+    )  # type: ignore[arg-type]
+
+    metrics = analyzer.calculate(trade_dates[-1])
+
+    assert metrics.hot_stock_close_above_avg_price_ratio is None
+    assert metrics.hot_stock_max_drawdown_median is None
+
+
+def test_tolerance_analyzer_counts_delisting_risk_by_security_name() -> None:
+    analyzer = MarketToleranceAnalyzer(
+        _FakeRepository(
+            _build_bars(),
+            security_name_map={
+                "AAA": "*ST示例A",
+                "BBB": "普通股票B",
+                "CCC": "退市整理C",
+                "DDD": "普通股票D",
+            },
+        )
+    )  # type: ignore[arg-type]
+    metrics = analyzer.calculate(date(2026, 4, 20))
+
+    assert metrics.delisting_risk_count == 2
 
 
 def test_emotion_analyzer_calculates_broken_ratio_and_three_day_breakout() -> None:

@@ -1,13 +1,11 @@
 """MySQL 市场数据仓储测试。"""
 
 from datetime import date
-from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from gmtrade_live.config import MySQLConfig
-from gmtrade_live.market_models import DailyBar, SecurityMaster
 from gmtrade_live.repositories import MySQLMarketRepository
 from gmtrade_live.repositories.mysql_market_repository import RepositoryError
 
@@ -122,4 +120,73 @@ def test_get_recent_trade_dates_returns_sorted_dates(
     with patch.object(repository, "_connection", mock_connection):
         result = repository.get_recent_trade_dates(date(2026, 4, 15), 3)
         # 应该返回升序
+        assert result == [date(2026, 4, 11), date(2026, 4, 14), date(2026, 4, 15)]
+
+
+def test_get_security_name_map_returns_empty_for_empty_symbols(
+    repository: MySQLMarketRepository,
+) -> None:
+    """测试空 symbol 列表返回空映射。"""
+    with patch.object(repository, "_connection", MagicMock()):
+        assert repository.get_security_name_map([]) == {}
+
+
+def test_get_security_name_map_returns_symbol_name_dict(
+    repository: MySQLMarketRepository,
+) -> None:
+    """测试返回 symbol -> name 映射。"""
+    mock_connection = MagicMock()
+    mock_cursor = MagicMock()
+    mock_cursor.fetchall.return_value = [
+        {"symbol": "SHSE.600000", "name": "*ST示例"},
+        {"symbol": "SZSE.000001", "name": "平安银行"},
+    ]
+    mock_connection.cursor.return_value.__enter__.return_value = mock_cursor
+
+    with patch.object(repository, "_connection", mock_connection):
+        result = repository.get_security_name_map(["SHSE.600000", "SZSE.000001"])
+        assert result == {
+            "SHSE.600000": "*ST示例",
+            "SZSE.000001": "平安银行",
+        }
+
+
+def test_get_security_listed_date_map_returns_symbol_listed_date_dict(
+    repository: MySQLMarketRepository,
+) -> None:
+    """测试返回 symbol -> listed_date 映射。"""
+    mock_connection = MagicMock()
+    mock_cursor = MagicMock()
+    mock_cursor.fetchall.return_value = [
+        {"symbol": "SHSE.600000", "listed_date": date(2007, 4, 27)},
+        {"symbol": "SZSE.000001", "listed_date": date(1991, 4, 3)},
+    ]
+    mock_connection.cursor.return_value.__enter__.return_value = mock_cursor
+
+    with patch.object(repository, "_connection", mock_connection):
+        result = repository.get_security_listed_date_map(
+            ["SHSE.600000", "SZSE.000001"]
+        )
+        assert result == {
+            "SHSE.600000": date(2007, 4, 27),
+            "SZSE.000001": date(1991, 4, 3),
+        }
+
+
+def test_get_trade_dates_between_returns_sorted_dates(
+    repository: MySQLMarketRepository,
+) -> None:
+    """测试返回升序交易日列表。"""
+    mock_connection = MagicMock()
+    mock_cursor = MagicMock()
+    # 模拟数据库返回顺序不稳定，仓储层需要统一输出升序结果
+    mock_cursor.fetchall.return_value = [
+        {"trade_date": date(2026, 4, 15)},
+        {"trade_date": date(2026, 4, 11)},
+        {"trade_date": date(2026, 4, 14)},
+    ]
+    mock_connection.cursor.return_value.__enter__.return_value = mock_cursor
+
+    with patch.object(repository, "_connection", mock_connection):
+        result = repository.get_trade_dates_between(date(2026, 4, 10), date(2026, 4, 15))
         assert result == [date(2026, 4, 11), date(2026, 4, 14), date(2026, 4, 15)]

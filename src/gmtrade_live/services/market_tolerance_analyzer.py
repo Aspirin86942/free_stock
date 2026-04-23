@@ -8,6 +8,7 @@ from decimal import Decimal
 
 from gmtrade_live.market_models import DailyBar, ToleranceMetrics
 from gmtrade_live.repositories.mysql_market_repository import MySQLMarketRepository
+from gmtrade_live.services.hot_stock_resolver import HotStockResolver
 
 logger = logging.getLogger(__name__)
 
@@ -15,8 +16,13 @@ logger = logging.getLogger(__name__)
 class MarketToleranceAnalyzer:
     """容错指标分析器。"""
 
-    def __init__(self, repository: MySQLMarketRepository) -> None:
+    def __init__(
+        self,
+        repository: MySQLMarketRepository,
+        hot_stock_resolver: HotStockResolver | None = None,
+    ) -> None:
         self.repository = repository
+        self.hot_stock_resolver = hot_stock_resolver or HotStockResolver(repository)
 
     def calculate(self, trade_date: date) -> ToleranceMetrics:
         """计算指定交易日的容错指标。"""
@@ -41,8 +47,10 @@ class MarketToleranceAnalyzer:
         # 统计 ST 股票数量
         st_count = sum(1 for bar in valid_bars if bar.is_st)
 
-        # TODO: 统计退市风险股票（需要股票名称数据，当前数据库只有 symbol）
-        delisting_risk_count = 0
+        # 退市风险标识依赖证券名称关键词，使用 security_master 做 best-effort 识别。
+        delisting_risk_count = self._count_delisting_risk_count(
+            symbols=[bar.symbol for bar in valid_bars]
+        )
 
         broken_limit_up_yesterday_avg_return = self._calculate_broken_limit_up_yesterday_avg_return(
             trade_date=trade_date,
@@ -65,6 +73,21 @@ class MarketToleranceAnalyzer:
             hot_stock_close_above_avg_price_ratio=hot_stock_close_above_avg_price_ratio,
             hot_stock_max_drawdown_median=hot_stock_max_drawdown_median,
         )
+
+    def _count_delisting_risk_count(self, symbols: list[str]) -> int:
+        if not symbols:
+            return 0
+        security_name_map = self.repository.get_security_name_map(symbols)
+        return sum(
+            1
+            for name in security_name_map.values()
+            if self._is_delisting_risk_name(name)
+        )
+
+    def _is_delisting_risk_name(self, name: str) -> bool:
+        normalized_name = name.replace(" ", "").upper()
+        # 使用最保守关键词，避免把普通股票误判成退市风险。
+        return normalized_name.startswith("*ST") or normalized_name.startswith("退市")
 
     def _calculate_broken_limit_up_yesterday_avg_return(self, *, trade_date: date) -> Decimal | None:
         recent_dates = self.repository.get_recent_trade_dates(trade_date, 2)
@@ -113,7 +136,7 @@ class MarketToleranceAnalyzer:
         trade_date: date,
         current_bars: list[DailyBar],
     ) -> Decimal | None:
-        hot_symbols = self._resolve_hot_symbols(trade_date)
+        hot_symbols = self.hot_stock_resolver.resolve(trade_date)
         if not hot_symbols:
             return None
 
@@ -135,7 +158,7 @@ class MarketToleranceAnalyzer:
         trade_date: date,
         current_bars: list[DailyBar],
     ) -> Decimal | None:
-        hot_symbols = self._resolve_hot_symbols(trade_date)
+        hot_symbols = self.hot_stock_resolver.resolve(trade_date)
         if not hot_symbols:
             return None
 
@@ -152,32 +175,6 @@ class MarketToleranceAnalyzer:
         if len(drawdowns) % 2 == 1:
             return drawdowns[middle]
         return (drawdowns[middle - 1] + drawdowns[middle]) / Decimal("2")
-
-    def _resolve_hot_symbols(self, trade_date: date) -> set[str]:
-        recent_dates = self.repository.get_recent_trade_dates(trade_date, 2)
-        if len(recent_dates) < 2:
-            return set()
-
-        previous_trade_date = recent_dates[-2]
-        previous_bars = self.repository.get_daily_bars_by_date(previous_trade_date)
-        return {
-            bar.symbol
-            for bar in previous_bars
-            if (
-                bar.has_trade
-                and not bar.suspended
-                and not bar.is_st
-                and bar.close > Decimal("10")
-                and self._is_turnover_over_10(bar.turnover_rate)
-            )
-        }
-
-    def _is_turnover_over_10(self, turnover_rate: Decimal | None) -> bool:
-        if turnover_rate is None:
-            return False
-        if turnover_rate > Decimal("1"):
-            return turnover_rate > Decimal("10")
-        return turnover_rate > Decimal("0.10")
 
     def _is_limit_up(self, bar: DailyBar) -> bool:
         if bar.pre_close <= Decimal("0"):

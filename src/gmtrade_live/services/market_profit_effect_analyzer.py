@@ -8,6 +8,7 @@ from decimal import Decimal
 
 from gmtrade_live.market_models import DailyBar, ProfitEffectMetrics
 from gmtrade_live.repositories.mysql_market_repository import MySQLMarketRepository
+from gmtrade_live.services.hot_stock_resolver import HotStockResolver
 
 logger = logging.getLogger(__name__)
 
@@ -15,8 +16,13 @@ logger = logging.getLogger(__name__)
 class MarketProfitEffectAnalyzer:
     """赚钱效应指标分析器。"""
 
-    def __init__(self, repository: MySQLMarketRepository) -> None:
+    def __init__(
+        self,
+        repository: MySQLMarketRepository,
+        hot_stock_resolver: HotStockResolver | None = None,
+    ) -> None:
         self.repository = repository
+        self.hot_stock_resolver = hot_stock_resolver or HotStockResolver(repository)
 
     def calculate(self, trade_date: date) -> ProfitEffectMetrics:
         """计算指定交易日的赚钱效应指标。"""
@@ -58,8 +64,6 @@ class MarketProfitEffectAnalyzer:
 
         hot_stock_4d_avg_return = self._calculate_hot_stock_4d_avg_return(
             trade_date=trade_date,
-            previous_trade_date=previous_trade_date,
-            previous_bars=previous_bars,
         )
 
         return ProfitEffectMetrics(
@@ -101,32 +105,12 @@ class MarketProfitEffectAnalyzer:
         limit_threshold = Decimal("0.05") if bar.is_st else Decimal("0.10")
         return pct_change >= limit_threshold * Decimal("0.99")
 
-    def _is_turnover_over_10(self, turnover_rate: Decimal | None) -> bool:
-        if turnover_rate is None:
-            return False
-        # 兼容两种口径：百分比(10)与比例(0.10)
-        if turnover_rate > Decimal("1"):
-            return turnover_rate > Decimal("10")
-        return turnover_rate > Decimal("0.10")
-
     def _calculate_hot_stock_4d_avg_return(
         self,
         *,
         trade_date: date,
-        previous_trade_date: date,
-        previous_bars: list[DailyBar],
     ) -> Decimal | None:
-        hot_symbols = [
-            bar.symbol
-            for bar in previous_bars
-            if (
-                bar.has_trade
-                and not bar.suspended
-                and not bar.is_st
-                and bar.close > Decimal("10")
-                and self._is_turnover_over_10(bar.turnover_rate)
-            )
-        ]
+        hot_symbols = sorted(self.hot_stock_resolver.resolve(trade_date))
         if not hot_symbols:
             return None
 
