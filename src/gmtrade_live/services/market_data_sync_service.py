@@ -26,6 +26,8 @@ class SyncResult:
 class MarketDataSyncService:
     """市场数据同步服务。"""
 
+    _TURNOVER_REPAIR_TRADE_DAYS = 2
+
     def __init__(
         self,
         config: MarketAnalysisConfig,
@@ -88,9 +90,12 @@ class MarketDataSyncService:
         # 4. 如果没有新数据，直接返回
         if start_date > end_date:
             logger.info("没有新数据需要同步")
+            repaired_rows = self._repair_recent_turnover_rates(
+                latest_trade_date=latest_trade_date_in_db or effective_last_success_date or end_date
+            )
             return SyncResult(
                 latest_trade_date=effective_last_success_date or latest_trade_date_in_db or end_date,
-                inserted_rows=0,
+                inserted_rows=repaired_rows,
                 updated_rows=0,
                 is_first_sync=is_first_sync,
             )
@@ -145,3 +150,63 @@ class MarketDataSyncService:
             updated_rows=total_updated,
             is_first_sync=is_first_sync,
         )
+
+    def _repair_recent_turnover_rates(self, latest_trade_date: date | None) -> int:
+        """在无新增交易日时，回补最近窗口的换手率数据。"""
+        if latest_trade_date is None:
+            return 0
+
+        trade_dates_needing_repair = self.repository.get_trade_dates_with_missing_turnover(
+            end_date=latest_trade_date,
+            limit=self._TURNOVER_REPAIR_TRADE_DAYS,
+        )
+        if not trade_dates_needing_repair:
+            logger.info(
+                "近期换手率已完整，无需修复",
+                extra={
+                    "latest_trade_date": str(latest_trade_date),
+                    "repair_trade_day_window": self._TURNOVER_REPAIR_TRADE_DAYS,
+                },
+            )
+            return 0
+
+        symbols = self.repository.get_all_symbols()
+        if not symbols:
+            return 0
+
+        repair_start_date = trade_dates_needing_repair[0]
+        repair_end_date = trade_dates_needing_repair[-1]
+        batch_size = 50
+        total_affected = 0
+
+        logger.info(
+            "开始执行近期换手率修复",
+            extra={
+                "repair_start_date": str(repair_start_date),
+                "repair_end_date": str(repair_end_date),
+                "repair_trade_date_count": len(trade_dates_needing_repair),
+                "symbol_count": len(symbols),
+            },
+        )
+
+        for i in range(0, len(symbols), batch_size):
+            batch_symbols = symbols[i : i + batch_size]
+            bars = self.gateway.fetch_daily_bars(
+                batch_symbols,
+                repair_start_date,
+                repair_end_date,
+            )
+            if not bars:
+                continue
+            affected = self.repository.upsert_daily_bars(bars)
+            total_affected += affected
+
+        logger.info(
+            "近期换手率修复完成",
+            extra={
+                "repair_start_date": str(repair_start_date),
+                "repair_end_date": str(repair_end_date),
+                "affected_rows": total_affected,
+            },
+        )
+        return total_affected

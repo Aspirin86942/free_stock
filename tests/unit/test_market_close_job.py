@@ -209,3 +209,58 @@ def test_feishu_build_message_handles_empty_daily_rows() -> None:
 
     assert message["msg_type"] == "text"
     assert "暂无可展示数据" in message["content"]["text"]
+
+
+def test_feishu_build_message_includes_core_metric_sections() -> None:
+    service = FeishuNotificationService(FeishuConfig(webhook="https://example.invalid/webhook"))
+    report_date = date(2026, 4, 21)
+    report = MarketCloseReport(
+        report_trade_date=report_date,
+        summary="summary",
+        daily_rows=[
+            DailyReportRow(
+                trade_date=report_date,
+                breadth=MarketBreadthMetrics(
+                    up_count=3200,
+                    down_count=1500,
+                    up_ratio=Decimal("0.68"),
+                    total_amount=Decimal("1230000000000"),
+                    limit_up_count=88,
+                    limit_down_count=12,
+                    new_high_20d_count=210,
+                    new_low_20d_count=63,
+                    new_high_60d_count=88,
+                    new_low_60d_count=42,
+                ),
+                profit_effect=ProfitEffectMetrics(
+                    limit_up_yesterday_avg_return=Decimal("0.035"),
+                    consecutive_limit_up_yesterday_avg_return=Decimal("0.028"),
+                    hot_stock_4d_avg_return=Decimal("0.076"),
+                ),
+                tolerance=ToleranceMetrics(
+                    st_count=120,
+                    delisting_risk_count=15,
+                    broken_limit_up_yesterday_avg_return=Decimal("-0.012"),
+                    hot_stock_close_above_avg_price_ratio=Decimal("0.61"),
+                    hot_stock_max_drawdown_median=Decimal("0.041"),
+                ),
+                emotion=EmotionMetrics(
+                    pct_above_9_5_count=76,
+                    pct_below_minus_9_5_count=9,
+                    broken_limit_up_ratio=Decimal("0.34"),
+                    pct_above_30_in_3d_count=21,
+                ),
+            )
+        ],
+        data_quality_flags=("口径A说明",),
+    )
+
+    message = service._build_message(report)
+    text = message["content"]["text"]
+
+    assert "20H" in text
+    assert "60L" in text
+    assert "💰 赚钱效应（最新交易日）" in text
+    assert "🛡️ 容错指标（最新交易日）" in text
+    assert "炸板率" in text
+    assert "最近3日涨幅>30%" in text

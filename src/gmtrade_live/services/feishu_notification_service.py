@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from decimal import Decimal
 from typing import Any
 
 import requests
@@ -58,7 +59,7 @@ class FeishuNotificationService:
 
         # 表格 - 最近10个交易日趋势
         lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        lines.append("交易日         上涨   下跌    占比   成交额(万亿)  涨停  跌停")
+        lines.append("交易日         上涨   下跌    占比   成交额(万亿)  涨停  跌停  20H  20L  60H  60L")
         lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
         if not report.daily_rows:
@@ -86,7 +87,11 @@ class FeishuNotificationService:
                 f"{row.breadth.up_ratio:>6.2%}  "
                 f"{row.breadth.total_amount / 1000000000000:>10.2f}  "
                 f"{row.breadth.limit_up_count:>4}  "
-                f"{row.breadth.limit_down_count:>4}"
+                f"{row.breadth.limit_down_count:>4}  "
+                f"{row.breadth.new_high_20d_count:>3}  "
+                f"{row.breadth.new_low_20d_count:>3}  "
+                f"{row.breadth.new_high_60d_count:>3}  "
+                f"{row.breadth.new_low_60d_count:>3}"
             )
 
         lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
@@ -94,15 +99,49 @@ class FeishuNotificationService:
 
         # 最新交易日详细指标
         latest_row = report.daily_rows[-1]
+        lines.append("💰 赚钱效应（最新交易日）")
+        lines.append(
+            "  • 昨日涨停股今日平均收益: "
+            f"{self._format_percentage(latest_row.profit_effect.limit_up_yesterday_avg_return)}"
+        )
+        lines.append(
+            "  • 昨日连板股今日平均收益: "
+            f"{self._format_percentage(latest_row.profit_effect.consecutive_limit_up_yesterday_avg_return)}"
+        )
+        lines.append(
+            "  • 热门股4日平均收益: "
+            f"{self._format_percentage(latest_row.profit_effect.hot_stock_4d_avg_return)}"
+        )
+        lines.append("")
+
+        lines.append("🛡️ 容错指标（最新交易日）")
+        lines.append(
+            "  • 昨日炸板股今日平均收益: "
+            f"{self._format_percentage(latest_row.tolerance.broken_limit_up_yesterday_avg_return)}"
+        )
+        lines.append(
+            "  • 热门股收盘高于均价占比: "
+            f"{self._format_percentage(latest_row.tolerance.hot_stock_close_above_avg_price_ratio)}"
+        )
+        lines.append(
+            "  • 热门股日内最大回撤中位数: "
+            f"{self._format_percentage(latest_row.tolerance.hot_stock_max_drawdown_median)}"
+        )
+        lines.append("")
+
         lines.append("📈 市场情绪指标（最新交易日）")
         lines.append(f"  • 涨幅 >9.5%: {latest_row.emotion.pct_above_9_5_count}家")
         lines.append(f"  • 跌幅 <-9.5%: {latest_row.emotion.pct_below_minus_9_5_count}家")
+        lines.append(
+            "  • 炸板率: "
+            f"{self._format_percentage(latest_row.emotion.broken_limit_up_ratio)}"
+        )
+        lines.append(f"  • 最近3日涨幅>30%: {latest_row.emotion.pct_above_30_in_3d_count}家")
         lines.append("")
 
         lines.append("⚠️ 风险提示")
         lines.append(f"  • ST股票: {latest_row.tolerance.st_count}家")
-        if latest_row.tolerance.delisting_risk_count > 0:
-            lines.append(f"  • 退市风险: {latest_row.tolerance.delisting_risk_count}家")
+        lines.append(f"  • 退市风险: {latest_row.tolerance.delisting_risk_count}家")
         lines.append("")
 
         if report.data_quality_flags:
@@ -117,3 +156,9 @@ class FeishuNotificationService:
             "msg_type": "text",
             "content": {"text": "\n".join(lines)},
         }
+
+    def _format_percentage(self, value: Decimal | None) -> str:
+        """把可空比例指标格式化为百分比文本。"""
+        if value is None:
+            return "N/A"
+        return f"{value:.2%}"

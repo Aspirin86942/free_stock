@@ -122,6 +122,12 @@ class GMHistoryMarketGateway:
                 },
             ) from exc
 
+        turnover_rate_map = self._fetch_turnover_rate_map(
+            symbols=symbols,
+            start_date=start_date,
+            end_date=end_date,
+        )
+
         results: list[DailyBar] = []
         for bar in bars:
             symbol = str(bar["symbol"])
@@ -145,10 +151,10 @@ class GMHistoryMarketGateway:
                 and close_price == Decimal("0")
             )
 
-            # 换手率（掘金可能不提供，暂时设为 None）
-            turnover_rate = None
-            if "turnover_rate" in bar and bar["turnover_rate"]:
-                turnover_rate = Decimal(str(bar["turnover_rate"]))
+            # history 接口通常不返回换手率，优先使用 daily_basic 补齐的数据。
+            turnover_rate = turnover_rate_map.get((symbol, trade_date))
+            if turnover_rate is None:
+                turnover_rate = self._parse_turnover_rate_from_history_bar(bar)
 
             # ST 状态（掘金可能不提供，暂时设为 False）
             # TODO: 需要从其他数据源获取 ST 状态
@@ -181,6 +187,142 @@ class GMHistoryMarketGateway:
             },
         )
         return results
+
+    def _fetch_turnover_rate_map(
+        self,
+        symbols: list[str],
+        start_date: date,
+        end_date: date,
+    ) -> dict[tuple[str, date], Decimal]:
+        """获取换手率映射，key=(symbol, trade_date)。"""
+        trade_dates = self.get_trade_dates(start_date, end_date)
+        if not trade_dates:
+            return {}
+
+        # 对于日常增量（通常只有 1 个交易日），按交易日批量拉取能显著减少请求次数；
+        # 对于首次多日回补，按股票拉取能避免按交易日调用过多接口。
+        if len(trade_dates) <= len(symbols):
+            turnover_rate_map = self._fetch_turnover_rate_map_by_trade_date(
+                symbols=symbols,
+                trade_dates=trade_dates,
+            )
+            fetch_mode = "by_trade_date"
+        else:
+            turnover_rate_map = self._fetch_turnover_rate_map_by_symbol(
+                symbols=symbols,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            fetch_mode = "by_symbol"
+
+        logger.info(
+            "换手率补齐完成",
+            extra={
+                "fetch_mode": fetch_mode,
+                "symbol_count": len(symbols),
+                "trade_date_count": len(trade_dates),
+                "turnover_points": len(turnover_rate_map),
+            },
+        )
+        return turnover_rate_map
+
+    def _fetch_turnover_rate_map_by_trade_date(
+        self,
+        symbols: list[str],
+        trade_dates: list[date],
+    ) -> dict[tuple[str, date], Decimal]:
+        """按交易日批量拉取换手率（stk_get_daily_basic_pt）。"""
+        turnover_rate_map: dict[tuple[str, date], Decimal] = {}
+        symbols_text = ",".join(symbols)
+
+        for trade_date in trade_dates:
+            try:
+                rows = self._api.stk_get_daily_basic_pt(
+                    symbols=symbols_text,
+                    fields="turnrate",
+                    trade_date=trade_date.isoformat(),
+                    df=False,
+                )
+            except Exception:
+                logger.exception(
+                    "按交易日拉取换手率失败",
+                    extra={
+                        "trade_date": str(trade_date),
+                        "symbol_count": len(symbols),
+                    },
+                )
+                continue
+            self._merge_turnover_rate_rows(turnover_rate_map, rows)
+        return turnover_rate_map
+
+    def _fetch_turnover_rate_map_by_symbol(
+        self,
+        symbols: list[str],
+        start_date: date,
+        end_date: date,
+    ) -> dict[tuple[str, date], Decimal]:
+        """按股票拉取换手率（stk_get_daily_basic）。"""
+        turnover_rate_map: dict[tuple[str, date], Decimal] = {}
+        for symbol in symbols:
+            try:
+                rows = self._api.stk_get_daily_basic(
+                    symbol=symbol,
+                    fields="turnrate",
+                    start_date=start_date.isoformat(),
+                    end_date=end_date.isoformat(),
+                    df=False,
+                )
+            except Exception:
+                logger.exception(
+                    "按股票拉取换手率失败",
+                    extra={
+                        "symbol": symbol,
+                        "start_date": str(start_date),
+                        "end_date": str(end_date),
+                    },
+                )
+                continue
+            self._merge_turnover_rate_rows(turnover_rate_map, rows)
+        return turnover_rate_map
+
+    def _merge_turnover_rate_rows(
+        self,
+        turnover_rate_map: dict[tuple[str, date], Decimal],
+        rows: Any,
+    ) -> None:
+        """将 daily_basic 返回行写入换手率映射。"""
+        if not isinstance(rows, list):
+            return
+
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+
+            symbol = str(row.get("symbol", "")).strip()
+            trade_date_raw = row.get("trade_date")
+            turnover_rate_raw = row.get("turnrate")
+            if not symbol or trade_date_raw in (None, "") or turnover_rate_raw in (None, ""):
+                continue
+
+            try:
+                trade_date = date.fromisoformat(str(trade_date_raw).split()[0])
+                turnover_rate = Decimal(str(turnover_rate_raw))
+            except (ValueError, ArithmeticError):
+                continue
+
+            turnover_rate_map[(symbol, trade_date)] = turnover_rate
+
+    def _parse_turnover_rate_from_history_bar(self, bar: dict[str, Any]) -> Decimal | None:
+        """兼容 history 可能返回的换手率字段。"""
+        for key in ("turnover_rate", "turnrate", "turn_rate"):
+            value = bar.get(key)
+            if value in (None, ""):
+                continue
+            try:
+                return Decimal(str(value))
+            except (ValueError, ArithmeticError):
+                continue
+        return None
 
     def get_trade_dates(self, start_date: date, end_date: date) -> list[date]:
         """获取指定日期范围内的交易日列表。"""

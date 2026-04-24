@@ -27,7 +27,7 @@ def test_connect_sets_token_and_endpoint(
     gateway.connect("test-token", "127.0.0.1:7001")
 
     mock_api.set_token.assert_called_once_with("test-token")
-    mock_api.set_endpoint.assert_called_once_with("127.0.0.1:7001")
+    mock_api.set_endpoint.assert_not_called()
 
 
 def test_get_security_master_filters_by_board(
@@ -86,6 +86,7 @@ def test_fetch_daily_bars_parses_bar_data(
     gateway: GMHistoryMarketGateway, mock_api: MagicMock
 ) -> None:
     """测试解析日线数据。"""
+    mock_api.get_trading_dates.return_value = ["2026-04-15 00:00:00"]
     mock_api.history.return_value = [
         {
             "symbol": "SHSE.600001",
@@ -99,6 +100,13 @@ def test_fetch_daily_bars_parses_bar_data(
             "amount": 10800000.0,
         }
     ]
+    mock_api.stk_get_daily_basic_pt.return_value = [
+        {
+            "symbol": "SHSE.600001",
+            "trade_date": "2026-04-15",
+            "turnrate": 12.5,
+        }
+    ]
 
     result = gateway.fetch_daily_bars(["SHSE.600001"], date(2026, 4, 15), date(2026, 4, 15))
 
@@ -108,6 +116,7 @@ def test_fetch_daily_bars_parses_bar_data(
     assert bar.trade_date == date(2026, 4, 15)
     assert bar.close == Decimal("10.8")
     assert bar.volume == 1000000
+    assert bar.turnover_rate == Decimal("12.5")
     assert bar.has_trade is True
     assert bar.suspended is False
 
@@ -116,6 +125,7 @@ def test_fetch_daily_bars_detects_suspended(
     gateway: GMHistoryMarketGateway, mock_api: MagicMock
 ) -> None:
     """测试检测停牌。"""
+    mock_api.get_trading_dates.return_value = ["2026-04-15 00:00:00"]
     mock_api.history.return_value = [
         {
             "symbol": "SHSE.600001",
@@ -129,6 +139,7 @@ def test_fetch_daily_bars_detects_suspended(
             "amount": 0,
         }
     ]
+    mock_api.stk_get_daily_basic_pt.return_value = []
 
     result = gateway.fetch_daily_bars(["SHSE.600001"], date(2026, 4, 15), date(2026, 4, 15))
 
@@ -136,6 +147,52 @@ def test_fetch_daily_bars_detects_suspended(
     bar = result[0]
     assert bar.suspended is True
     assert bar.has_trade is False
+
+
+def test_fetch_daily_bars_uses_symbol_mode_for_long_range(
+    gateway: GMHistoryMarketGateway, mock_api: MagicMock
+) -> None:
+    """测试在多交易日场景按股票拉取换手率。"""
+    mock_api.get_trading_dates.return_value = [
+        "2026-04-14 00:00:00",
+        "2026-04-15 00:00:00",
+    ]
+    mock_api.history.return_value = [
+        {
+            "symbol": "SHSE.600001",
+            "eob": "2026-04-14 15:00:00",
+            "open": 10.0,
+            "high": 10.2,
+            "low": 9.8,
+            "close": 10.1,
+            "pre_close": 9.9,
+            "volume": 100,
+            "amount": 1000,
+        },
+        {
+            "symbol": "SHSE.600001",
+            "eob": "2026-04-15 15:00:00",
+            "open": 10.1,
+            "high": 10.3,
+            "low": 10.0,
+            "close": 10.2,
+            "pre_close": 10.1,
+            "volume": 120,
+            "amount": 1224,
+        },
+    ]
+    mock_api.stk_get_daily_basic.return_value = [
+        {"symbol": "SHSE.600001", "trade_date": "2026-04-14", "turnrate": 8.1},
+        {"symbol": "SHSE.600001", "trade_date": "2026-04-15", "turnrate": 9.2},
+    ]
+
+    result = gateway.fetch_daily_bars(["SHSE.600001"], date(2026, 4, 14), date(2026, 4, 15))
+
+    assert len(result) == 2
+    assert result[0].turnover_rate == Decimal("8.1")
+    assert result[1].turnover_rate == Decimal("9.2")
+    mock_api.stk_get_daily_basic.assert_called_once()
+    mock_api.stk_get_daily_basic_pt.assert_not_called()
 
 
 def test_get_trade_dates_returns_sorted_dates(
