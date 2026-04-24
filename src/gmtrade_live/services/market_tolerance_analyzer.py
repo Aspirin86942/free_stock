@@ -7,8 +7,8 @@ from datetime import date
 from decimal import Decimal
 
 from gmtrade_live.market_models import DailyBar, ToleranceMetrics
-from gmtrade_live.repositories.mysql_market_repository import MySQLMarketRepository
 from gmtrade_live.services.hot_stock_resolver import HotStockResolver
+from gmtrade_live.services.market_repository_cache import MarketDataRepository
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +18,7 @@ class MarketToleranceAnalyzer:
 
     def __init__(
         self,
-        repository: MySQLMarketRepository,
+        repository: MarketDataRepository,
         hot_stock_resolver: HotStockResolver | None = None,
     ) -> None:
         self.repository = repository

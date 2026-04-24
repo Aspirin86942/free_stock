@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from bisect import bisect_left
 from datetime import date
 from decimal import Decimal
 from typing import Protocol
@@ -33,12 +34,16 @@ class HotStockResolver:
 
     def __init__(self, repository: HotStockRepository) -> None:
         self.repository = repository
+        self._resolved_symbols_cache: dict[date, frozenset[str]] = {}
 
     def resolve(self, trade_date: date) -> set[str]:
         """解析交易日对应的热门股列表。
 
         逻辑以交易日 T 的前一交易日 T-1 为基准，保守跳过任何缺失数据。
         """
+        if trade_date in self._resolved_symbols_cache:
+            return set(self._resolved_symbols_cache[trade_date])
+
         logger.info(
             "开始解析热门股",
             extra={"trade_date": str(trade_date)},
@@ -49,13 +54,13 @@ class HotStockResolver:
                 "热门股解析提前结束：输入日期不是交易日或最近交易日列表为空",
                 extra={"trade_date": str(trade_date)},
             )
-            return set()
+            return self._cache_resolved_symbols(trade_date, set())
         if len(recent_trade_dates) < 2:
             logger.info(
                 "热门股解析提前结束：缺少前一交易日",
                 extra={"trade_date": str(trade_date)},
             )
-            return set()
+            return self._cache_resolved_symbols(trade_date, set())
 
         previous_trade_date = recent_trade_dates[-2]
         previous_bars = self.repository.get_daily_bars_by_date(previous_trade_date)
@@ -67,7 +72,7 @@ class HotStockResolver:
                     "previous_trade_date": str(previous_trade_date),
                 },
             )
-            return set()
+            return self._cache_resolved_symbols(trade_date, set())
 
         candidate_bars = [
             bar
@@ -75,7 +80,7 @@ class HotStockResolver:
             if self._is_hot_bar(bar)
         ]
         if not candidate_bars:
-            return set()
+            return self._cache_resolved_symbols(trade_date, set())
 
         symbols = [bar.symbol for bar in candidate_bars]
         listed_date_map = self.repository.get_security_listed_date_map(symbols)
@@ -87,16 +92,13 @@ class HotStockResolver:
                     "previous_trade_date": str(previous_trade_date),
                 },
             )
-            return set()
+            return self._cache_resolved_symbols(trade_date, set())
 
-        hot_symbols: set[str] = set()
-        for bar in candidate_bars:
-            listed_date = listed_date_map.get(bar.symbol)
-            if listed_date is None:
-                continue
-            if not self._has_minimum_listed_trade_days(listed_date, previous_trade_date):
-                continue
-            hot_symbols.add(bar.symbol)
+        hot_symbols = self._filter_symbols_by_listed_trade_days(
+            candidate_bars=candidate_bars,
+            listed_date_map=listed_date_map,
+            previous_trade_date=previous_trade_date,
+        )
 
         resolved_symbols = hot_symbols
         logger.info(
@@ -107,7 +109,12 @@ class HotStockResolver:
                 "hot_stock_count": len(resolved_symbols),
             },
         )
-        return resolved_symbols
+        return self._cache_resolved_symbols(trade_date, resolved_symbols)
+
+    def _cache_resolved_symbols(self, trade_date: date, symbols: set[str]) -> set[str]:
+        """缓存解析结果，并返回副本避免调用方误改内部状态。"""
+        self._resolved_symbols_cache[trade_date] = frozenset(symbols)
+        return set(symbols)
 
     def _is_hot_bar(self, bar: DailyBar) -> bool:
         """判断前一交易日行情是否满足热门股基础条件。"""
@@ -127,20 +134,46 @@ class HotStockResolver:
             return turnover_rate > Decimal("10")
         return turnover_rate > Decimal("0.10")
 
-    def _has_minimum_listed_trade_days(self, listed_date: date, previous_trade_date: date) -> bool:
-        """按实际交易日计数，只有满 250 个交易日才允许进入热门股池。
+    def _filter_symbols_by_listed_trade_days(
+        self,
+        *,
+        candidate_bars: list[DailyBar],
+        listed_date_map: dict[str, date],
+        previous_trade_date: date,
+    ) -> set[str]:
+        """按实际交易日批量过滤上市未满 250 日的候选股票。
 
-        为什么不能用自然日：上市日期和分析日之间会穿插周末与节假日，
-        只有交易日数量才能准确体现股票真实参与市场交易的时间。
+        为什么一次查询最早上市日至前一交易日：候选股票可能有几百个，
+        逐个查询交易日会把报告生成放大成大量重复 SQL。
         """
-        trade_dates = self.repository.get_trade_dates_between(listed_date, previous_trade_date)
+        available_listed_dates = [
+            listed_date
+            for bar in candidate_bars
+            if (listed_date := listed_date_map.get(bar.symbol)) is not None
+        ]
+        if not available_listed_dates:
+            return set()
+
+        earliest_listed_date = min(available_listed_dates)
+        trade_dates = self.repository.get_trade_dates_between(earliest_listed_date, previous_trade_date)
         if not trade_dates:
             logger.info(
                 "热门股解析提前结束：交易日列表为空",
                 extra={
-                    "listed_date": str(listed_date),
+                    "listed_date": str(earliest_listed_date),
                     "previous_trade_date": str(previous_trade_date),
                 },
             )
-            return False
-        return len(trade_dates) >= 250
+            return set()
+
+        sorted_trade_dates = sorted(trade_dates)
+        hot_symbols: set[str] = set()
+        for bar in candidate_bars:
+            listed_date = listed_date_map.get(bar.symbol)
+            if listed_date is None:
+                continue
+            first_trade_index = bisect_left(sorted_trade_dates, listed_date)
+            listed_trade_days = len(sorted_trade_dates) - first_trade_index
+            if listed_trade_days >= 250:
+                hot_symbols.add(bar.symbol)
+        return hot_symbols

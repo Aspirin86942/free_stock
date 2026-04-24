@@ -6,10 +6,10 @@ import logging
 from datetime import date
 
 from gmtrade_live.market_models import DailyReportRow, MarketCloseReport
-from gmtrade_live.repositories.mysql_market_repository import MySQLMarketRepository
 from gmtrade_live.services.market_breadth_analyzer import MarketBreadthAnalyzer
 from gmtrade_live.services.market_emotion_analyzer import MarketEmotionAnalyzer
 from gmtrade_live.services.market_profit_effect_analyzer import MarketProfitEffectAnalyzer
+from gmtrade_live.services.market_repository_cache import MarketDataRepository
 from gmtrade_live.services.market_tolerance_analyzer import MarketToleranceAnalyzer
 
 logger = logging.getLogger(__name__)
@@ -20,7 +20,7 @@ class MarketCloseReportBuilder:
 
     def __init__(
         self,
-        repository: MySQLMarketRepository,
+        repository: MarketDataRepository,
         breadth_analyzer: MarketBreadthAnalyzer,
         profit_effect_analyzer: MarketProfitEffectAnalyzer,
         tolerance_analyzer: MarketToleranceAnalyzer,

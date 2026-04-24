@@ -7,7 +7,7 @@ from datetime import date
 from decimal import Decimal
 
 from gmtrade_live.market_models import DailyBar, MarketBreadthMetrics
-from gmtrade_live.repositories.mysql_market_repository import MySQLMarketRepository
+from gmtrade_live.services.market_repository_cache import MarketDataRepository
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class MarketBreadthAnalyzer:
     """市场整体指标分析器。"""
 
-    def __init__(self, repository: MySQLMarketRepository) -> None:
+    def __init__(self, repository: MarketDataRepository) -> None:
         self.repository = repository
 
     def calculate(self, trade_date: date) -> MarketBreadthMetrics:
@@ -66,16 +66,13 @@ class MarketBreadthAnalyzer:
                 limit_down_count += 1
 
         symbols = [bar.symbol for bar in valid_bars]
-        new_high_20d_count, new_low_20d_count = self._count_new_high_low(
+        new_high_low_counts = self._count_new_high_low_by_windows(
             trade_date=trade_date,
             symbols=symbols,
-            lookback_trade_days=20,
+            lookback_trade_days_list=(20, 60),
         )
-        new_high_60d_count, new_low_60d_count = self._count_new_high_low(
-            trade_date=trade_date,
-            symbols=symbols,
-            lookback_trade_days=60,
-        )
+        new_high_20d_count, new_low_20d_count = new_high_low_counts[20]
+        new_high_60d_count, new_low_60d_count = new_high_low_counts[60]
 
         logger.info(
             f"市场宽度: 上涨{up_count}家, 下跌{down_count}家, "
@@ -138,3 +135,61 @@ class MarketBreadthAnalyzer:
                 low_count += 1
 
         return high_count, low_count
+
+    def _count_new_high_low_by_windows(
+        self,
+        *,
+        trade_date: date,
+        symbols: list[str],
+        lookback_trade_days_list: tuple[int, ...],
+    ) -> dict[int, tuple[int, int]]:
+        """一次历史查询计算多个新高/新低窗口。
+
+        为什么保留旧单窗口方法：历史调用方和单元定位仍可复用；报告主路径则用该方法
+        避免 20 日与 60 日窗口分别查交易日和区间日线。
+        """
+        default_counts = {lookback: (0, 0) for lookback in lookback_trade_days_list}
+        if not symbols or not lookback_trade_days_list:
+            return default_counts
+
+        max_lookback_trade_days = max(lookback_trade_days_list)
+        trade_dates = self.repository.get_recent_trade_dates(
+            trade_date,
+            max_lookback_trade_days + 1,
+        )
+        if len(trade_dates) < max_lookback_trade_days + 1:
+            return default_counts
+
+        start_date = trade_dates[0]
+        history_bars = self.repository.get_daily_bars(symbols, start_date, trade_date)
+
+        bars_by_symbol: dict[str, list[DailyBar]] = {}
+        for bar in history_bars:
+            bars_by_symbol.setdefault(bar.symbol, []).append(bar)
+
+        counts = dict(default_counts)
+        sorted_lookbacks = tuple(sorted(lookback_trade_days_list))
+        for lookback_trade_days in sorted_lookbacks:
+            high_count = 0
+            low_count = 0
+            required_bar_count = lookback_trade_days + 1
+            for symbol in symbols:
+                symbol_bars = sorted(
+                    bars_by_symbol.get(symbol, []),
+                    key=lambda item: item.trade_date,
+                )
+                if len(symbol_bars) < required_bar_count:
+                    continue
+
+                window_bars = symbol_bars[-required_bar_count:]
+                current_bar = window_bars[-1]
+                previous_closes = [bar.close for bar in window_bars[:-1] if bar.close > Decimal("0")]
+                if not previous_closes:
+                    continue
+
+                if current_bar.close > max(previous_closes):
+                    high_count += 1
+                if current_bar.close < min(previous_closes):
+                    low_count += 1
+            counts[lookback_trade_days] = (high_count, low_count)
+        return counts

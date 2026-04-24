@@ -34,6 +34,39 @@ class _FakeRepository:
         return [trade_date for trade_date in self.trade_dates if start_date <= trade_date <= end_date]
 
 
+class _CountingRepository(_FakeRepository):
+    def __init__(
+        self,
+        *,
+        trade_dates: list[date],
+        bars_by_date: dict[date, list[DailyBar]],
+        listed_date_map: dict[str, date],
+    ) -> None:
+        super().__init__(trade_dates, bars_by_date, listed_date_map)
+        self.calls: dict[str, int] = {
+            "get_recent_trade_dates": 0,
+            "get_daily_bars_by_date": 0,
+            "get_security_listed_date_map": 0,
+            "get_trade_dates_between": 0,
+        }
+
+    def get_recent_trade_dates(self, end_date: date, limit: int) -> list[date]:
+        self.calls["get_recent_trade_dates"] += 1
+        return super().get_recent_trade_dates(end_date, limit)
+
+    def get_daily_bars_by_date(self, trade_date: date) -> list[DailyBar]:
+        self.calls["get_daily_bars_by_date"] += 1
+        return super().get_daily_bars_by_date(trade_date)
+
+    def get_security_listed_date_map(self, symbols: list[str]) -> dict[str, date]:
+        self.calls["get_security_listed_date_map"] += 1
+        return super().get_security_listed_date_map(symbols)
+
+    def get_trade_dates_between(self, start_date: date, end_date: date) -> list[date]:
+        self.calls["get_trade_dates_between"] += 1
+        return super().get_trade_dates_between(start_date, end_date)
+
+
 def _bar(
     *,
     symbol: str,
@@ -114,6 +147,39 @@ def test_hot_stock_resolver_keeps_symbols_listed_for_exactly_250_trade_days() ->
     resolver = HotStockResolver(repository)
 
     assert resolver.resolve(trade_date) == {"KEEP"}
+
+
+def test_hot_stock_resolver_caches_result_and_batches_listed_day_checks() -> None:
+    trade_dates = _build_sparse_trade_dates(260)
+    trade_date = trade_dates[-1]
+    previous_trade_date = trade_dates[-2]
+    listed_date = trade_dates[0]
+    repository = _CountingRepository(
+        trade_dates=trade_dates,
+        bars_by_date={
+            previous_trade_date: [
+                _bar(symbol="AAA", trade_date=previous_trade_date),
+                _bar(symbol="BBB", trade_date=previous_trade_date),
+                _bar(symbol="CCC", trade_date=previous_trade_date),
+            ]
+        },
+        listed_date_map={
+            "AAA": listed_date,
+            "BBB": listed_date,
+            "CCC": listed_date,
+        },
+    )
+
+    resolver = HotStockResolver(repository)
+
+    assert resolver.resolve(trade_date) == {"AAA", "BBB", "CCC"}
+    assert resolver.resolve(trade_date) == {"AAA", "BBB", "CCC"}
+    assert repository.calls == {
+        "get_recent_trade_dates": 1,
+        "get_daily_bars_by_date": 1,
+        "get_security_listed_date_map": 1,
+        "get_trade_dates_between": 1,
+    }
 
 
 def test_hot_stock_resolver_accepts_percent_turnover_rate_ratio_0_11() -> None:

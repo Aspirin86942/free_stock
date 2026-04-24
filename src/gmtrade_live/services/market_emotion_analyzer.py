@@ -7,7 +7,7 @@ from datetime import date
 from decimal import Decimal
 
 from gmtrade_live.market_models import DailyBar, EmotionMetrics
-from gmtrade_live.repositories.mysql_market_repository import MySQLMarketRepository
+from gmtrade_live.services.market_repository_cache import MarketDataRepository
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 class MarketEmotionAnalyzer:
     """情绪指标分析器。"""
 
-    def __init__(self, repository: MySQLMarketRepository) -> None:
+    def __init__(self, repository: MarketDataRepository) -> None:
         self.repository = repository
 
     def calculate(self, trade_date: date) -> EmotionMetrics:

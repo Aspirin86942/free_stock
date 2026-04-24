@@ -9,11 +9,13 @@ from gmtrade_live.config import RuntimeConfig
 from gmtrade_live.gateways.gm_history_market_gateway import GMHistoryMarketGateway
 from gmtrade_live.repositories.mysql_market_repository import MySQLMarketRepository
 from gmtrade_live.services.feishu_notification_service import FeishuNotificationService
+from gmtrade_live.services.hot_stock_resolver import HotStockResolver
 from gmtrade_live.services.market_breadth_analyzer import MarketBreadthAnalyzer
 from gmtrade_live.services.market_close_report_builder import MarketCloseReportBuilder
 from gmtrade_live.services.market_data_sync_service import MarketDataSyncService
 from gmtrade_live.services.market_emotion_analyzer import MarketEmotionAnalyzer
 from gmtrade_live.services.market_profit_effect_analyzer import MarketProfitEffectAnalyzer
+from gmtrade_live.services.market_repository_cache import CachedMarketDataRepository
 from gmtrade_live.services.market_tolerance_analyzer import MarketToleranceAnalyzer
 
 logger = logging.getLogger(__name__)
@@ -51,14 +53,36 @@ def run_market_close_job(config: RuntimeConfig) -> MarketCloseJobResult:
             f"插入行数: {sync_result.inserted_rows}"
         )
 
+        last_sent_trade_date = repository.get_last_success_trade_date("market_close_report_sent")
+        if last_sent_trade_date == sync_result.latest_trade_date:
+            logger.info(
+                "当前交易日日报已发送，跳过重复报告生成与发送",
+                extra={"trade_date": str(sync_result.latest_trade_date)},
+            )
+            return MarketCloseJobResult(
+                success=True,
+                message="盘后任务执行成功（已发送过当日日报，跳过重复报告生成与发送）",
+                sync_inserted_rows=sync_result.inserted_rows,
+                report_trade_date=str(sync_result.latest_trade_date),
+            )
+
         # 3. 生成盘后分析报告
-        breadth_analyzer = MarketBreadthAnalyzer(repository)
-        profit_effect_analyzer = MarketProfitEffectAnalyzer(repository)
-        tolerance_analyzer = MarketToleranceAnalyzer(repository)
-        emotion_analyzer = MarketEmotionAnalyzer(repository)
+        # 单次报告内多个 analyzer 会反复读取同日行情和交易日历，使用只读缓存仓储降低 SQL 次数。
+        cached_repository = CachedMarketDataRepository(repository)
+        hot_stock_resolver = HotStockResolver(cached_repository)
+        breadth_analyzer = MarketBreadthAnalyzer(cached_repository)
+        profit_effect_analyzer = MarketProfitEffectAnalyzer(
+            cached_repository,
+            hot_stock_resolver=hot_stock_resolver,
+        )
+        tolerance_analyzer = MarketToleranceAnalyzer(
+            cached_repository,
+            hot_stock_resolver=hot_stock_resolver,
+        )
+        emotion_analyzer = MarketEmotionAnalyzer(cached_repository)
 
         report_builder = MarketCloseReportBuilder(
-            repository,
+            cached_repository,
             breadth_analyzer,
             profit_effect_analyzer,
             tolerance_analyzer,
@@ -75,19 +99,6 @@ def run_market_close_job(config: RuntimeConfig) -> MarketCloseJobResult:
             return MarketCloseJobResult(
                 success=True,
                 message="盘后任务执行成功（报告无明细，跳过通知）",
-                sync_inserted_rows=sync_result.inserted_rows,
-                report_trade_date=str(sync_result.latest_trade_date),
-            )
-
-        last_sent_trade_date = repository.get_last_success_trade_date("market_close_report_sent")
-        if last_sent_trade_date == sync_result.latest_trade_date:
-            logger.info(
-                "当前交易日日报已发送，跳过重复发送",
-                extra={"trade_date": str(sync_result.latest_trade_date)},
-            )
-            return MarketCloseJobResult(
-                success=True,
-                message="盘后任务执行成功（已发送过当日日报，跳过重复发送）",
                 sync_inserted_rows=sync_result.inserted_rows,
                 report_trade_date=str(sync_result.latest_trade_date),
             )

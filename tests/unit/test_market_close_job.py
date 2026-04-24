@@ -141,6 +141,7 @@ def test_run_market_close_job_closes_repository_on_exception(monkeypatch: pytest
 
 def test_run_market_close_job_skip_send_when_same_trade_date(monkeypatch: pytest.MonkeyPatch) -> None:
     sent = {"count": 0}
+    built = {"count": 0}
 
     class _FakeRepository:
         def __init__(self, _config) -> None:
@@ -176,6 +177,7 @@ def test_run_market_close_job_skip_send_when_same_trade_date(monkeypatch: pytest
             pass
 
         def build(self, *_args, **_kwargs):
+            built["count"] += 1
             return _build_report(date(2026, 4, 21))
 
     class _FakeFeishu:
@@ -194,7 +196,102 @@ def test_run_market_close_job_skip_send_when_same_trade_date(monkeypatch: pytest
     result = run_market_close_job(_build_config())
 
     assert result.success is True
+    assert built["count"] == 0
     assert sent["count"] == 0
+
+
+def test_run_market_close_job_reuses_cached_repository_and_hot_stock_resolver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeRepository:
+        def __init__(self, _config) -> None:
+            pass
+
+        def connect(self) -> None:
+            pass
+
+        def ensure_tables(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+        def get_last_success_trade_date(self, _job_name: str):
+            return None
+
+    class _FakeGateway:
+        def connect(self, _token: str, _endpoint: str) -> None:
+            pass
+
+    class _FakeSyncService:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def sync(self):
+            return type("SyncResult", (), {"latest_trade_date": date(2026, 4, 21), "inserted_rows": 0})
+
+    class _FakeHotStockResolver:
+        def __init__(self, repository) -> None:
+            captured["resolver_repository"] = repository
+
+    class _FakeBreadthAnalyzer:
+        def __init__(self, repository) -> None:
+            captured["breadth_repository"] = repository
+
+    class _FakeProfitEffectAnalyzer:
+        def __init__(self, repository, hot_stock_resolver=None) -> None:
+            captured["profit_repository"] = repository
+            captured["profit_resolver"] = hot_stock_resolver
+
+    class _FakeToleranceAnalyzer:
+        def __init__(self, repository, hot_stock_resolver=None) -> None:
+            captured["tolerance_repository"] = repository
+            captured["tolerance_resolver"] = hot_stock_resolver
+
+    class _FakeEmotionAnalyzer:
+        def __init__(self, repository) -> None:
+            captured["emotion_repository"] = repository
+
+    class _FakeBuilder:
+        def __init__(
+            self,
+            repository,
+            breadth_analyzer,
+            profit_effect_analyzer,
+            tolerance_analyzer,
+            emotion_analyzer,
+        ) -> None:
+            captured["builder_repository"] = repository
+
+        def build(self, *_args, **_kwargs):
+            return MarketCloseReport(
+                report_trade_date=date(2026, 4, 21),
+                summary="summary",
+                daily_rows=[],
+            )
+
+    monkeypatch.setattr(market_close_job_module, "GMHistoryMarketGateway", _FakeGateway)
+    monkeypatch.setattr(market_close_job_module, "MySQLMarketRepository", _FakeRepository)
+    monkeypatch.setattr(market_close_job_module, "MarketDataSyncService", _FakeSyncService)
+    monkeypatch.setattr(market_close_job_module, "HotStockResolver", _FakeHotStockResolver)
+    monkeypatch.setattr(market_close_job_module, "MarketBreadthAnalyzer", _FakeBreadthAnalyzer)
+    monkeypatch.setattr(market_close_job_module, "MarketProfitEffectAnalyzer", _FakeProfitEffectAnalyzer)
+    monkeypatch.setattr(market_close_job_module, "MarketToleranceAnalyzer", _FakeToleranceAnalyzer)
+    monkeypatch.setattr(market_close_job_module, "MarketEmotionAnalyzer", _FakeEmotionAnalyzer)
+    monkeypatch.setattr(market_close_job_module, "MarketCloseReportBuilder", _FakeBuilder)
+
+    result = run_market_close_job(_build_config())
+
+    assert result.success is True
+    assert captured["profit_resolver"] is captured["tolerance_resolver"]
+    assert captured["profit_resolver"] is not None
+    assert captured["resolver_repository"] is captured["builder_repository"]
+    assert captured["breadth_repository"] is captured["builder_repository"]
+    assert captured["profit_repository"] is captured["builder_repository"]
+    assert captured["tolerance_repository"] is captured["builder_repository"]
+    assert captured["emotion_repository"] is captured["builder_repository"]
 
 
 def test_feishu_build_message_handles_empty_daily_rows() -> None:
