@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -14,6 +15,31 @@ def test_setup_logging_creates_runtime_log_file(tmp_path: Path) -> None:
     logger.info("hello runtime")
 
     assert (tmp_path / "runtime.log").exists()
+
+
+def test_setup_logging_routes_package_module_logs_to_runtime_file(tmp_path: Path) -> None:
+    try:
+        setup_logging("market-analysis-scheduler", tmp_path)
+
+        module_logger = logging.getLogger("gmtrade_live.runtime_scheduler")
+        module_logger.info("scheduler event")
+
+        for logger_name in ("market-analysis-scheduler", "gmtrade_live"):
+            for handler in logging.getLogger(logger_name).handlers:
+                handler.flush()
+
+        log_path = tmp_path / "runtime.log"
+        assert log_path.exists()
+        assert "scheduler event" in log_path.read_text(encoding="utf-8")
+    finally:
+        # 这里显式回收测试过程中挂到全局 logger 树上的 handler，避免污染后续 caplog。
+        for logger_name in ("market-analysis-scheduler", "gmtrade_live"):
+            logger = logging.getLogger(logger_name)
+            for handler in list(logger.handlers):
+                logger.removeHandler(handler)
+                handler.close()
+            logger.setLevel(logging.NOTSET)
+            logger.propagate = True
 
 
 def test_setup_order_audit_logger_creates_order_audit_log_file(tmp_path: Path) -> None:

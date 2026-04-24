@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import date
 from decimal import Decimal
 from typing import Any
 
@@ -10,7 +11,7 @@ import requests
 
 from gmtrade_live.config import FeishuConfig
 from gmtrade_live.errors import ServiceError
-from gmtrade_live.market_models import MarketCloseReport
+from gmtrade_live.market_models import DailyReportRow, MarketCloseReport
 
 logger = logging.getLogger(__name__)
 
@@ -50,112 +51,118 @@ class FeishuNotificationService:
         lines = []
 
         # 标题
-        lines.append(f"📊 市场分析日报 {report.report_trade_date}")
+        lines.append(f"📊 市场分析日报 | {report.report_trade_date}")
         lines.append("")
-
-        # 摘要
-        lines.append(report.summary)
-        lines.append("")
-
-        # 表格 - 最近10个交易日趋势
-        lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        lines.append("交易日         上涨   下跌    占比   成交额(万亿)  涨停  跌停  20H  20L  60H  60L")
-        lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
 
         if not report.daily_rows:
-            lines.append("暂无可展示数据（可能尚未完成同步或无有效交易样本）")
-            lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            lines.append("最近 10 日趋势")
+            lines.append("• 暂无可展示数据（可能尚未完成同步或无有效交易样本）")
             return {
                 "msg_type": "text",
                 "content": {"text": "\n".join(lines)},
             }
 
-        for row in report.daily_rows:
-            up_ratio = float(row.breadth.up_ratio)
-            # 添加涨跌标记
-            if up_ratio >= 0.6:
-                marker = "🔴"
-            elif up_ratio >= 0.4:
-                marker = "⚪"
-            else:
-                marker = "🟢"
-
-            lines.append(
-                f"{row.trade_date} {marker}  "
-                f"{row.breadth.up_count:>4}  "
-                f"{row.breadth.down_count:>4}  "
-                f"{row.breadth.up_ratio:>6.2%}  "
-                f"{row.breadth.total_amount / 1000000000000:>10.2f}  "
-                f"{row.breadth.limit_up_count:>4}  "
-                f"{row.breadth.limit_down_count:>4}  "
-                f"{row.breadth.new_high_20d_count:>3}  "
-                f"{row.breadth.new_low_20d_count:>3}  "
-                f"{row.breadth.new_high_60d_count:>3}  "
-                f"{row.breadth.new_low_60d_count:>3}"
-            )
-
-        lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        lines.append("")
-
         # 最新交易日详细指标
         latest_row = report.daily_rows[-1]
-        lines.append("💰 赚钱效应（最新交易日）")
+        # 飞书群阅读通常先看结论再决定是否展开复盘，这里把摘要放在最前，避免宽表压住关键信息。
+        lines.extend(self._build_summary_section(report.summary, latest_row))
+        lines.append("")
+
+        lines.append("今日核心")
         lines.append(
-            "  • 昨日涨停股今日平均收益: "
-            f"{self._format_percentage(latest_row.profit_effect.limit_up_yesterday_avg_return)}"
-        )
-        lines.append(
-            "  • 昨日连板股今日平均收益: "
+            "• 连板溢价：昨日连板股今日平均收益 "
             f"{self._format_percentage(latest_row.profit_effect.consecutive_limit_up_yesterday_avg_return)}"
         )
         lines.append(
-            "  • 热门股4日平均收益: "
+            "• 涨停溢价：昨日涨停股今日平均收益 "
+            f"{self._format_percentage(latest_row.profit_effect.limit_up_yesterday_avg_return)}"
+        )
+        lines.append(
+            "• 热门股表现：热门股 4 日平均收益 "
             f"{self._format_percentage(latest_row.profit_effect.hot_stock_4d_avg_return)}"
         )
         lines.append("")
 
-        lines.append("🛡️ 容错指标（最新交易日）")
+        lines.append("容错观察")
         lines.append(
-            "  • 昨日炸板股今日平均收益: "
+            "• 昨日炸板股今日平均收益："
             f"{self._format_percentage(latest_row.tolerance.broken_limit_up_yesterday_avg_return)}"
         )
         lines.append(
-            "  • 热门股收盘高于均价占比: "
+            "• 热门股收盘高于均价占比："
             f"{self._format_percentage(latest_row.tolerance.hot_stock_close_above_avg_price_ratio)}"
         )
         lines.append(
-            "  • 热门股日内最大回撤中位数: "
+            "• 热门股日内最大回撤中位数："
             f"{self._format_percentage(latest_row.tolerance.hot_stock_max_drawdown_median)}"
         )
         lines.append("")
 
-        lines.append("📈 市场情绪指标（最新交易日）")
-        lines.append(f"  • 涨幅 >9.5%: {latest_row.emotion.pct_above_9_5_count}家")
-        lines.append(f"  • 跌幅 <-9.5%: {latest_row.emotion.pct_below_minus_9_5_count}家")
-        lines.append(
-            "  • 炸板率: "
-            f"{self._format_percentage(latest_row.emotion.broken_limit_up_ratio)}"
-        )
-        lines.append(f"  • 最近3日涨幅>30%: {latest_row.emotion.pct_above_30_in_3d_count}家")
-        lines.append("")
-
-        lines.append("⚠️ 风险提示")
-        lines.append(f"  • ST股票: {latest_row.tolerance.st_count}家")
-        lines.append(f"  • 退市风险: {latest_row.tolerance.delisting_risk_count}家")
+        lines.append("最近 10 日趋势")
+        for row in report.daily_rows:
+            lines.append(self._build_trend_line(row))
         lines.append("")
 
         if report.data_quality_flags:
-            lines.append("🧪 口径说明")
+            lines.append("口径说明")
             for flag in report.data_quality_flags:
-                lines.append(f"  • {flag}")
-            lines.append("")
-
-        lines.append("🔴 大涨(≥60%)  ⚪ 震荡(40-60%)  🟢 大跌(<40%)")
+                lines.append(f"• {self._normalize_quality_flag(flag)}")
 
         return {
             "msg_type": "text",
             "content": {"text": "\n".join(lines)},
         }
+
+    def _build_summary_section(self, summary: str, latest_row: DailyReportRow) -> list[str]:
+        """构建飞书消息顶部摘要。"""
+        return [
+            "一眼结论",
+            f"• {summary}",
+            "• 情绪观察："
+            f"涨停 {latest_row.breadth.limit_up_count} 家，"
+            f"跌停 {latest_row.breadth.limit_down_count} 家，"
+            f"炸板率 {self._format_percentage(latest_row.emotion.broken_limit_up_ratio)}",
+            "• 风险观察："
+            f"跌幅 < -9.5% 个股 {latest_row.emotion.pct_below_minus_9_5_count} 家，"
+            f"退市风险 {latest_row.tolerance.delisting_risk_count} 家",
+        ]
+
+    def _build_trend_line(self, row: DailyReportRow) -> str:
+        """构建单个交易日趋势文本。"""
+        trade_date_text = self._format_trade_date(row.trade_date)
+        trend_label = self._resolve_trend_label(row.breadth.up_ratio)
+        amount_trillion = row.breadth.total_amount / Decimal("1000000000000")
+        return (
+            f"• {trade_date_text} {trend_label}："
+            f"上涨占比 {row.breadth.up_ratio:.2%}，"
+            f"成交额 {amount_trillion:.2f} 万亿，"
+            f"涨停 {row.breadth.limit_up_count}，"
+            f"跌停 {row.breadth.limit_down_count}"
+        )
+
+    def _format_trade_date(self, trade_date: date) -> str:
+        """把日期格式化为更紧凑的 MM-DD。"""
+        return trade_date.strftime("%m-%d")
+
+    def _resolve_trend_label(self, up_ratio: Decimal) -> str:
+        """把上涨占比分桶成更适合群消息速读的标签。"""
+        if up_ratio >= Decimal("0.70"):
+            return "明显走强"
+        if up_ratio >= Decimal("0.60"):
+            return "强"
+        if up_ratio >= Decimal("0.40"):
+            return "震荡"
+        if up_ratio >= Decimal("0.30"):
+            return "弱"
+        return "明显转弱"
+
+    def _normalize_quality_flag(self, flag: str) -> str:
+        """把内部质量说明转成更适合业务群阅读的中文文案。"""
+        replacements = {
+            "ST历史状态按可得数据计算，相关口径为 best-effort": "ST 状态按可得数据近似识别，仅供参考",
+            "退市风险按证券名称关键词近似识别，相关口径为 best-effort": "退市风险按名称关键词近似识别，仅供参考",
+        }
+        return replacements.get(flag, flag.replace("best-effort", "仅供参考"))
 
     def _format_percentage(self, value: Decimal | None) -> str:
         """把可空比例指标格式化为百分比文本。"""

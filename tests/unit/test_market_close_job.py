@@ -211,13 +211,46 @@ def test_feishu_build_message_handles_empty_daily_rows() -> None:
     assert "暂无可展示数据" in message["content"]["text"]
 
 
-def test_feishu_build_message_includes_core_metric_sections() -> None:
+def test_feishu_build_message_uses_summary_first_and_keeps_trend_lines() -> None:
     service = FeishuNotificationService(FeishuConfig(webhook="https://example.invalid/webhook"))
     report_date = date(2026, 4, 21)
     report = MarketCloseReport(
         report_trade_date=report_date,
-        summary="summary",
+        summary="市场概况：上涨 3200 家，下跌 1500 家，上涨占比 68.00%",
         daily_rows=[
+            DailyReportRow(
+                trade_date=date(2026, 4, 20),
+                breadth=MarketBreadthMetrics(
+                    up_count=2800,
+                    down_count=1700,
+                    up_ratio=Decimal("0.61"),
+                    total_amount=Decimal("1150000000000"),
+                    limit_up_count=92,
+                    limit_down_count=10,
+                    new_high_20d_count=180,
+                    new_low_20d_count=55,
+                    new_high_60d_count=96,
+                    new_low_60d_count=38,
+                ),
+                profit_effect=ProfitEffectMetrics(
+                    limit_up_yesterday_avg_return=Decimal("0.012"),
+                    consecutive_limit_up_yesterday_avg_return=Decimal("0.018"),
+                    hot_stock_4d_avg_return=Decimal("0.024"),
+                ),
+                tolerance=ToleranceMetrics(
+                    st_count=110,
+                    delisting_risk_count=12,
+                    broken_limit_up_yesterday_avg_return=Decimal("-0.006"),
+                    hot_stock_close_above_avg_price_ratio=Decimal("0.57"),
+                    hot_stock_max_drawdown_median=Decimal("0.032"),
+                ),
+                emotion=EmotionMetrics(
+                    pct_above_9_5_count=81,
+                    pct_below_minus_9_5_count=7,
+                    broken_limit_up_ratio=Decimal("0.27"),
+                    pct_above_30_in_3d_count=18,
+                ),
+            ),
             DailyReportRow(
                 trade_date=report_date,
                 breadth=MarketBreadthMetrics(
@@ -252,15 +285,24 @@ def test_feishu_build_message_includes_core_metric_sections() -> None:
                 ),
             )
         ],
-        data_quality_flags=("口径A说明",),
+        data_quality_flags=(
+            "ST历史状态按可得数据计算，相关口径为 best-effort",
+            "退市风险按证券名称关键词近似识别，相关口径为 best-effort",
+            "口径A说明",
+        ),
     )
 
     message = service._build_message(report)
     text = message["content"]["text"]
 
-    assert "20H" in text
-    assert "60L" in text
-    assert "💰 赚钱效应（最新交易日）" in text
-    assert "🛡️ 容错指标（最新交易日）" in text
-    assert "炸板率" in text
-    assert "最近3日涨幅>30%" in text
+    assert "一眼结论" in text
+    assert "今日核心" in text
+    assert "容错观察" in text
+    assert "最近 10 日趋势" in text
+    assert "04-20 强" in text
+    assert "04-21 强" in text
+    assert "连板溢价：昨日连板股今日平均收益 2.80%" in text
+    assert "ST 状态按可得数据近似识别，仅供参考" in text
+    assert "退市风险按名称关键词近似识别，仅供参考" in text
+    assert "口径A说明" in text
+    assert "20H" not in text
