@@ -1,11 +1,13 @@
 """掘金历史行情网关测试。"""
 
+import time
 from datetime import date, timedelta
 from decimal import Decimal
 from unittest.mock import MagicMock
 
 import pytest
 
+from gmtrade_live.errors import ServiceError
 from gmtrade_live.gateways.gm_history_market_gateway import GMHistoryMarketGateway
 from gmtrade_live.market_models import DailyBar, SecurityMaster
 
@@ -208,6 +210,26 @@ def test_get_trade_dates_returns_sorted_dates(
     result = gateway.get_trade_dates(date(2026, 4, 11), date(2026, 4, 15))
 
     assert result == [date(2026, 4, 11), date(2026, 4, 14), date(2026, 4, 15)]
+
+
+def test_get_trade_dates_raises_timeout_when_api_blocks(
+    gateway: GMHistoryMarketGateway,
+    mock_api: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """测试交易日接口阻塞时会触发超时错误。"""
+
+    def _slow_get_trading_dates(**_: object) -> list[str]:
+        time.sleep(0.05)
+        return ["2026-04-15 00:00:00"]
+
+    mock_api.get_trading_dates.side_effect = _slow_get_trading_dates
+    monkeypatch.setattr(gateway, "_GET_TRADING_DATES_TIMEOUT_SECONDS", 0.01)
+
+    with pytest.raises(ServiceError) as exc_info:
+        gateway.get_trade_dates(date(2026, 4, 11), date(2026, 4, 15))
+
+    assert exc_info.value.code == "gm.fetch_trade_dates_timeout"
 
 
 def test_get_latest_trade_date_returns_most_recent(
