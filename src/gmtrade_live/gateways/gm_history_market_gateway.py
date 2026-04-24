@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+import threading
 from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
@@ -17,6 +18,8 @@ logger = logging.getLogger(__name__)
 
 class GMHistoryMarketGateway:
     """掘金历史市场数据网关。"""
+
+    _GET_TRADING_DATES_TIMEOUT_SECONDS = 20.0
 
     def __init__(self, api_module: Any | None = None) -> None:
         self._api = api_module or importlib.import_module("gm.api")
@@ -328,17 +331,70 @@ class GMHistoryMarketGateway:
         """获取指定日期范围内的交易日列表。"""
         try:
             # 掘金 API: get_trading_dates(exchange, start_date, end_date)
-            trade_dates_str = self._api.get_trading_dates(
-                exchange="SHSE", start_date=start_date.isoformat(), end_date=end_date.isoformat()
+            trade_dates_str = self._call_api_with_timeout(
+                api_call=lambda: self._api.get_trading_dates(
+                    exchange="SHSE",
+                    start_date=start_date.isoformat(),
+                    end_date=end_date.isoformat(),
+                ),
+                timeout_seconds=self._GET_TRADING_DATES_TIMEOUT_SECONDS,
+                timeout_code="gm.fetch_trade_dates_timeout",
+                timeout_message="获取交易日列表超时，请确认掘金终端是否已启动并可连接",
+                timeout_context={
+                    "start_date": str(start_date),
+                    "end_date": str(end_date),
+                    "timeout_seconds": self._GET_TRADING_DATES_TIMEOUT_SECONDS,
+                },
             )
             return [date.fromisoformat(d.split()[0]) for d in trade_dates_str]
         except Exception as exc:
+            if isinstance(exc, ServiceError):
+                raise
             raise ServiceError(
                 code="gm.fetch_trade_dates_failed",
                 message=f"获取交易日列表失败: {exc}",
                 retryable=True,
                 context={"start_date": str(start_date), "end_date": str(end_date)},
             ) from exc
+
+    def _call_api_with_timeout(
+        self,
+        *,
+        api_call: Any,
+        timeout_seconds: float,
+        timeout_code: str,
+        timeout_message: str,
+        timeout_context: dict[str, Any],
+    ) -> Any:
+        """为阻塞式 GM API 调用提供超时检测。
+
+        为什么要单独做线程超时包装：
+        当掘金终端未启动时，部分 API 调用会阻塞较久，直接卡住主流程。
+        这里通过守护线程 + join 超时，确保主线程可快速失败并返回可观测错误。
+        """
+        result_holder: dict[str, Any] = {}
+        error_holder: dict[str, BaseException] = {}
+
+        def _runner() -> None:
+            try:
+                result_holder["value"] = api_call()
+            except BaseException as exc:  # noqa: BLE001
+                error_holder["error"] = exc
+
+        thread = threading.Thread(target=_runner, daemon=True)
+        thread.start()
+        thread.join(timeout_seconds)
+
+        if thread.is_alive():
+            raise ServiceError(
+                code=timeout_code,
+                message=timeout_message,
+                retryable=True,
+                context=timeout_context,
+            )
+        if "error" in error_holder:
+            raise error_holder["error"]
+        return result_holder.get("value")
 
     def get_latest_trade_date(self, reference_date: date | None = None) -> date:
         """获取最近一个已完成的交易日。"""
