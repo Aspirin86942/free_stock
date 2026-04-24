@@ -15,8 +15,13 @@ import sys
 import time
 from datetime import date
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import yaml
+
+if TYPE_CHECKING:
+    from gmtrade_live.config import MySQLConfig
+    from gmtrade_live.repositories.mysql_market_repository import MySQLMarketRepository
 
 
 def _ensure_local_src_on_path() -> None:
@@ -61,7 +66,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def _count_missing_rows(
-    repository: "MySQLMarketRepository",
+    repository: MySQLMarketRepository,
     start_date: date,
     end_date: date,
 ) -> int:
@@ -87,7 +92,7 @@ def _run_worker_batches(
     worker_name: str,
     gm_token: str,
     gm_endpoint: str,
-    mysql_config: "MySQLConfig",
+    mysql_config: MySQLConfig,
     indexed_batches: list[tuple[int, list[str]]],
     repair_start_date: date,
     repair_end_date: date,

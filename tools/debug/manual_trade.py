@@ -1,5 +1,7 @@
 """手工交易调试脚本，仅用于链路验证。"""
 
+# ruff: noqa: E402
+
 from __future__ import annotations
 
 import argparse

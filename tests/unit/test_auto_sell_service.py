@@ -5,7 +5,6 @@ import logging
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
-from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 from gmtrade_live.config import AppConfig

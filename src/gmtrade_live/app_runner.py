@@ -12,8 +12,8 @@ from gmtrade_live.config import load_config
 from gmtrade_live.gateways.gm_market_gateway import GMCurrentQuoteGateway
 from gmtrade_live.gateways.gmtrade_trade_gateway import GMTradeGateway
 from gmtrade_live.logging_setup import setup_logging, setup_order_audit_logger
-from gmtrade_live.services.decision_observer import DecisionObserverService
 from gmtrade_live.services.auto_sell_service import AutoSellService
+from gmtrade_live.services.decision_observer import DecisionObserverService
 from gmtrade_live.services.order_execution_state import OrderExecutionStateStore
 from gmtrade_live.services.position_decision_state import PositionDecisionStateStore
 from gmtrade_live.services.sell_candidate_pipeline import SellCandidatePipeline

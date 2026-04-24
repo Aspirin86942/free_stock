@@ -28,7 +28,7 @@ class GMHistoryMarketGateway:
         """连接掘金 API。"""
         self._api.set_token(token)
         # 注意：掘金 API 不需要 set_endpoint，endpoint 由掘金终端自动处理
-        logger.info(f"掘金历史行情网关已连接，token 已设置")
+        logger.info("掘金历史行情网关已连接，token 已设置")
 
     def get_security_master(self, scope: str) -> list[SecurityMaster]:
         """获取股票池（沪深主板 + 创业板 + 科创板）。"""

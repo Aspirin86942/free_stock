@@ -16,9 +16,8 @@ from gmtrade_live.models import (
     QuoteSnapshot,
 )
 from gmtrade_live.session import TradingSessionState
-from tools.debug.check_connectivity import run_connectivity_check
-from tools.debug.check_connectivity import build_connectivity_summary
 from tools.debug import check_connectivity
+from tools.debug.check_connectivity import build_connectivity_summary, run_connectivity_check
 
 
 def test_ensure_local_src_on_path_adds_repo_src_when_package_unavailable(

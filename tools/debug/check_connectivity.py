@@ -1,5 +1,7 @@
 """连通性调试脚本，仅用于排障验证。"""
 
+# ruff: noqa: E402
+
 from __future__ import annotations
 
 import argparse

@@ -8,13 +8,10 @@ from zoneinfo import ZoneInfo
 
 from gmtrade_live.config import AppConfig
 from gmtrade_live.models import (
-    CandidateRoundSummary,
     CandidateRound,
-    DecisionChangeEvent,
+    CandidateRoundSummary,
     DecisionObservationReport,
-    DecisionPositionStateSnapshot,
     DecisionRoundSummary,
-    SellCandidate,
 )
 from gmtrade_live.services.decision_observer import DecisionObserverService
 

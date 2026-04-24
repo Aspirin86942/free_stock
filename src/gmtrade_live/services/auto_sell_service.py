@@ -22,7 +22,6 @@ from gmtrade_live.models import (
     OrderRequest,
     OrderStatusSnapshot,
     SellBlockDetail,
-    SellCandidate,
     SellExecutionDetail,
 )
 from gmtrade_live.services.order_execution_state import (

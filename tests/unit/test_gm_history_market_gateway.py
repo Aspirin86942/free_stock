@@ -1,7 +1,7 @@
 """掘金历史行情网关测试。"""
 
 import time
-from datetime import date, timedelta
+from datetime import date
 from decimal import Decimal
 from unittest.mock import MagicMock
 
@@ -9,7 +9,6 @@ import pytest
 
 from gmtrade_live.errors import ServiceError
 from gmtrade_live.gateways.gm_history_market_gateway import GMHistoryMarketGateway
-from gmtrade_live.market_models import DailyBar, SecurityMaster
 
 
 @pytest.fixture

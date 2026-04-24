@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-
 _STAGE_NAME_PATTERN = re.compile(
     r"(?<![A-Za-z0-9_])[mM][0-4](?:(?=[A-Z_])|\b)"
 )
