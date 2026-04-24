@@ -298,11 +298,25 @@ def test_feishu_build_message_uses_summary_first_and_keeps_trend_lines() -> None
     assert "一眼结论" in text
     assert "今日核心" in text
     assert "容错观察" in text
+    assert "市场情绪指标（最新交易日）" in text
+    assert "• 涨幅 >9.5%: 76家" in text
+    assert "• 跌幅 <-9.5%: 9家" in text
+    assert "• 炸板率: 34.00%" in text
+    assert "• 最近3日涨幅>30%: 21家" in text
     assert "最近 10 日趋势" in text
     assert "04-20 强" in text
     assert "04-21 强" in text
     assert "连板溢价：昨日连板股今日平均收益 2.80%" in text
+    assert "成交额：1.15 万亿" in text
+    assert "成交额：1.23 万亿" in text
+    assert "<20H>: 180" in text
+    assert "<20L>: 55" in text
+    assert "<60H>: 96" in text
+    assert "<60L>: 38" in text
+    assert "<20H>: 210" in text
+    assert "<20L>: 63" in text
+    assert "<60H>: 88" in text
+    assert "<60L>: 42" in text
     assert "ST 状态按可得数据近似识别，仅供参考" in text
     assert "退市风险按名称关键词近似识别，仅供参考" in text
     assert "口径A说明" in text
-    assert "20H" not in text

@@ -98,6 +98,9 @@ class FeishuNotificationService:
         )
         lines.append("")
 
+        lines.extend(self._build_latest_emotion_section(latest_row))
+        lines.append("")
+
         lines.append("最近 10 日趋势")
         for row in report.daily_rows:
             lines.append(self._build_trend_line(row))
@@ -127,6 +130,16 @@ class FeishuNotificationService:
             f"退市风险 {latest_row.tolerance.delisting_risk_count} 家",
         ]
 
+    def _build_latest_emotion_section(self, latest_row: DailyReportRow) -> list[str]:
+        """构建最新交易日情绪指标分组。"""
+        return [
+            "市场情绪指标（最新交易日）",
+            f"• 涨幅 >9.5%: {latest_row.emotion.pct_above_9_5_count}家",
+            f"• 跌幅 <-9.5%: {latest_row.emotion.pct_below_minus_9_5_count}家",
+            f"• 炸板率: {self._format_percentage(latest_row.emotion.broken_limit_up_ratio)}",
+            f"• 最近3日涨幅>30%: {latest_row.emotion.pct_above_30_in_3d_count}家",
+        ]
+
     def _build_trend_line(self, row: DailyReportRow) -> str:
         """构建单个交易日趋势文本。"""
         trade_date_text = self._format_trade_date(row.trade_date)
@@ -135,9 +148,13 @@ class FeishuNotificationService:
         return (
             f"• {trade_date_text} {trend_label}："
             f"上涨占比 {row.breadth.up_ratio:.2%}，"
-            f"成交额 {amount_trillion:.2f} 万亿，"
-            f"涨停 {row.breadth.limit_up_count}，"
-            f"跌停 {row.breadth.limit_down_count}"
+            f"成交额：{amount_trillion:.2f} 万亿，"
+            f"涨停：{row.breadth.limit_up_count}，"
+            f"跌停：{row.breadth.limit_down_count}，"
+            f"<20H>: {row.breadth.new_high_20d_count}，"
+            f"<20L>: {row.breadth.new_low_20d_count}，"
+            f"<60H>: {row.breadth.new_high_60d_count}，"
+            f"<60L>: {row.breadth.new_low_60d_count}"
         )
 
     def _format_trade_date(self, trade_date: date) -> str:
