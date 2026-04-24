@@ -541,6 +541,44 @@ class MySQLMarketRepository:
                 context={"end_date": str(end_date), "limit": limit},
             ) from exc
 
+    def get_trade_dates_with_missing_turnover(self, end_date: date, limit: int) -> list[date]:
+        """获取最近 N 个交易日中换手率仍缺失的交易日列表（升序）。"""
+        if not self._connection:
+            raise RepositoryError(
+                code="repository.not_connected",
+                message="数据库未连接",
+                retryable=False,
+                context={},
+            )
+
+        sql = """
+            SELECT trade_date
+            FROM (
+                SELECT trade_date,
+                       SUM(CASE WHEN turnover_rate IS NULL THEN 1 ELSE 0 END) AS missing_turnover_count
+                FROM market_daily_bar
+                WHERE trade_date <= %s
+                GROUP BY trade_date
+                ORDER BY trade_date DESC
+                LIMIT %s
+            ) recent_trade_dates
+            WHERE missing_turnover_count > 0
+            ORDER BY trade_date ASC
+        """
+
+        try:
+            with self._connection.cursor() as cursor:
+                cursor.execute(sql, (end_date, limit))
+                rows = cursor.fetchall()
+            return [row["trade_date"] for row in rows]
+        except pymysql.Error as exc:
+            raise RepositoryError(
+                code="repository.query_failed",
+                message=f"查询缺失换手率交易日失败: {exc}",
+                retryable=True,
+                context={"end_date": str(end_date), "limit": limit},
+            ) from exc
+
     def get_trade_dates_between(self, start_date: date, end_date: date) -> list[date]:
         """获取指定日期区间内的交易日列表，按时间顺序返回。"""
         if not self._connection:

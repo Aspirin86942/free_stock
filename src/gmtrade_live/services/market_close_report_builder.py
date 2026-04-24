@@ -77,6 +77,7 @@ class MarketCloseReportBuilder:
         if any(row.tolerance.hot_stock_close_above_avg_price_ratio is None for row in daily_rows):
             quality_flags.append("部分容错指标因样本不足未计算")
         quality_flags.append("ST历史状态按可得数据计算，相关口径为 best-effort")
+        quality_flags.append("退市风险按证券名称关键词近似识别，相关口径为 best-effort")
 
         return MarketCloseReport(
             report_trade_date=report_trade_date,

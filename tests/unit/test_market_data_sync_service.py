@@ -33,6 +33,8 @@ def mock_gateway() -> MagicMock:
 def mock_repository() -> MagicMock:
     repository = MagicMock(spec=MySQLMarketRepository)
     repository.get_latest_trade_date_in_daily_bar.return_value = None
+    repository.get_trade_dates_with_missing_turnover.return_value = []
+    repository.get_all_symbols.return_value = []
     return repository
 
 
@@ -153,6 +155,7 @@ def test_sync_returns_zero_when_no_new_data(
     mock_repository.get_latest_trade_date_in_daily_bar.return_value = date(2026, 4, 16)
     mock_gateway.get_next_trade_date.return_value = date(2026, 4, 17)
     mock_gateway.get_latest_trade_date.return_value = date(2026, 4, 16)
+    mock_repository.get_trade_dates_with_missing_turnover.return_value = []
 
     result = service.sync()
 
@@ -160,6 +163,52 @@ def test_sync_returns_zero_when_no_new_data(
     assert result.latest_trade_date == date(2026, 4, 16)
     mock_gateway.get_security_master.assert_not_called()
     mock_repository.upsert_daily_bars.assert_not_called()
+
+
+def test_sync_repairs_recent_turnover_when_no_new_data(
+    service: MarketDataSyncService,
+    mock_gateway: MagicMock,
+    mock_repository: MagicMock,
+) -> None:
+    """测试无新增交易日时会执行近期换手率修复。"""
+    mock_repository.get_last_success_trade_date.return_value = date(2026, 4, 16)
+    mock_repository.get_latest_trade_date_in_daily_bar.return_value = date(2026, 4, 16)
+    mock_gateway.get_next_trade_date.return_value = date(2026, 4, 17)
+    mock_gateway.get_latest_trade_date.return_value = date(2026, 4, 16)
+
+    mock_repository.get_trade_dates_with_missing_turnover.return_value = [
+        date(2026, 4, 15),
+        date(2026, 4, 16),
+    ]
+    mock_repository.get_all_symbols.return_value = ["SHSE.600001"]
+    mock_gateway.fetch_daily_bars.return_value = [
+        DailyBar(
+            symbol="SHSE.600001",
+            trade_date=date(2026, 4, 16),
+            open=Decimal("10"),
+            high=Decimal("10.5"),
+            low=Decimal("9.8"),
+            close=Decimal("10.2"),
+            pre_close=Decimal("10"),
+            volume=1000,
+            amount=Decimal("10000"),
+            turnover_rate=Decimal("8.8"),
+            is_st=False,
+            suspended=False,
+            has_trade=True,
+        )
+    ]
+    mock_repository.upsert_daily_bars.return_value = 1
+
+    result = service.sync()
+
+    assert result.inserted_rows == 1
+    mock_gateway.fetch_daily_bars.assert_called_once_with(
+        ["SHSE.600001"],
+        date(2026, 4, 15),
+        date(2026, 4, 16),
+    )
+    mock_repository.upsert_daily_bars.assert_called_once()
 
 
 def test_sync_batches_symbols_in_chunks(
