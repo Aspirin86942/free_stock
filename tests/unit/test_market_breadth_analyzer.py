@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import date, timedelta
 from decimal import Decimal
 
+import pytest
+
 from gmtrade_live.market_models import DailyBar
 from gmtrade_live.services.market_breadth_analyzer import MarketBreadthAnalyzer
 
@@ -76,3 +78,23 @@ def test_market_breadth_analyzer_queries_history_once_for_20d_and_60d() -> None:
         "get_recent_trade_dates": 1,
         "get_daily_bars": 1,
     }
+
+
+def test_market_breadth_analyzer_skips_invalid_pre_close_and_logs_audit(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    trade_date = date(2026, 4, 20)
+    repository = _CountingRepository(
+        [
+            _bar("BAD", trade_date, "10", pre_close="0"),
+            _bar("GOOD", trade_date, "11", pre_close="10"),
+        ]
+    )
+
+    metrics = MarketBreadthAnalyzer(repository).calculate(trade_date)  # type: ignore[arg-type]
+
+    assert metrics.up_count == 1
+    assert metrics.down_count == 0
+    assert metrics.up_ratio == Decimal("1")
+    assert "invalid_price_bar_skipped" in caplog.text
+    assert "BAD" in caplog.text

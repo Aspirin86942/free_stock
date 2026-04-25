@@ -16,6 +16,7 @@ from gmtrade_live.config import (
     TradeConfig,
 )
 from gmtrade_live.market_models import (
+    DailyBar,
     DailyReportRow,
     EmotionMetrics,
     MarketBreadthMetrics,
@@ -292,6 +293,118 @@ def test_run_market_close_job_reuses_cached_repository_and_hot_stock_resolver(
     assert captured["profit_repository"] is captured["builder_repository"]
     assert captured["tolerance_repository"] is captured["builder_repository"]
     assert captured["emotion_repository"] is captured["builder_repository"]
+
+
+def test_run_market_close_job_skips_invalid_pre_close_bar(monkeypatch: pytest.MonkeyPatch) -> None:
+    report_date = date(2026, 4, 21)
+    bars = [
+        DailyBar(
+            symbol="BAD",
+            trade_date=report_date,
+            open=Decimal("10"),
+            high=Decimal("10"),
+            low=Decimal("10"),
+            close=Decimal("10"),
+            pre_close=Decimal("0"),
+            volume=100,
+            amount=Decimal("1000"),
+            turnover_rate=None,
+            is_st=False,
+            suspended=False,
+            has_trade=True,
+        ),
+        DailyBar(
+            symbol="GOOD",
+            trade_date=report_date,
+            open=Decimal("10"),
+            high=Decimal("11"),
+            low=Decimal("10"),
+            close=Decimal("11"),
+            pre_close=Decimal("10"),
+            volume=100,
+            amount=Decimal("1100"),
+            turnover_rate=None,
+            is_st=False,
+            suspended=False,
+            has_trade=True,
+        ),
+    ]
+
+    class _FakeRepository:
+        def __init__(self, _config) -> None:
+            pass
+
+        def connect(self) -> None:
+            pass
+
+        def ensure_tables(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+        def get_last_success_trade_date(self, _job_name: str):
+            return None
+
+        def get_daily_bars_by_date(self, trade_date: date) -> list[DailyBar]:
+            return [bar for bar in bars if bar.trade_date == trade_date]
+
+        def get_recent_trade_dates(self, end_date: date, limit: int) -> list[date]:
+            del limit
+            return [bar.trade_date for bar in bars if bar.trade_date <= end_date][:1]
+
+        def get_daily_bars(
+            self,
+            symbols: list[str],
+            start_date: date,
+            end_date: date,
+        ) -> list[DailyBar]:
+            symbol_set = set(symbols)
+            return [
+                bar
+                for bar in bars
+                if bar.symbol in symbol_set and start_date <= bar.trade_date <= end_date
+            ]
+
+        def get_security_name_map(self, _symbols: list[str]) -> dict[str, str]:
+            return {}
+
+        def get_security_listed_date_map(self, _symbols: list[str]) -> dict[str, date]:
+            return {}
+
+        def get_trade_dates_between(self, _start_date: date, _end_date: date) -> list[date]:
+            return []
+
+        def save_last_success_trade_date(self, _job_name: str, _trade_date: date) -> None:
+            pass
+
+    class _FakeGateway:
+        def connect(self, _token: str, _endpoint: str) -> None:
+            pass
+
+    class _FakeSyncService:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def sync(self):
+            return type("SyncResult", (), {"latest_trade_date": report_date, "inserted_rows": 0})
+
+    class _FakeFeishu:
+        def __init__(self, _config) -> None:
+            pass
+
+        def send_market_close_report(self, _report: MarketCloseReport) -> None:
+            pass
+
+    monkeypatch.setattr(market_close_job_module, "GMHistoryMarketGateway", _FakeGateway)
+    monkeypatch.setattr(market_close_job_module, "MySQLMarketRepository", _FakeRepository)
+    monkeypatch.setattr(market_close_job_module, "MarketDataSyncService", _FakeSyncService)
+    monkeypatch.setattr(market_close_job_module, "FeishuNotificationService", _FakeFeishu)
+
+    result = run_market_close_job(_build_config())
+
+    assert result.success is True
+    assert result.report_trade_date == str(report_date)
 
 
 def test_render_market_close_report_text_handles_empty_daily_rows() -> None:

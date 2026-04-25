@@ -346,6 +346,77 @@ def test_run_round_tracks_existing_open_order_without_duplicate_submit() -> None
     assert report.execution_details[-1].filled_volume == 100
 
 
+def test_run_round_reconciles_existing_open_order_when_candidate_is_not_submittable() -> None:
+    trade_gateway = SequencedTradeGateway(
+        order_statuses=[("filled", 200, 0, "BK_1")],
+        execution_reports=[(_execution(200),)],
+    )
+    execution_manager = OrderExecutionStateStore(logger=None)
+    execution_manager.update_state(
+        "SHSE.600036",
+        OrderExecutionState.submitted,
+        cl_ord_id="CL_EXIST",
+        broker_order_id="BK_1",
+        requested_volume=200,
+        remaining_volume=200,
+        submit_accepted=True,
+        last_order_status="submitted",
+    )
+    service = AutoSellService(
+        trade_gateway=trade_gateway,
+        candidate_pipeline=FakeCandidatePipeline(
+            rounds=[_candidate_round(candidates=(_candidate(_position(), can_submit_sell=False),))]
+        ),
+        execution_state_manager=execution_manager,
+        logger=logging.getLogger("test"),
+        clock=_now,
+        timer=FakeTimer([0.0, 0.1, 0.2]),
+        sleep=lambda seconds: None,
+    )
+
+    report = service.run_round(config=_config(), round_no=2, reconcile_timeout_seconds=5)
+
+    assert trade_gateway.submit_calls == 0
+    assert trade_gateway.query_order_status_calls == 1
+    assert report.execution_details[-1].execution_state == "filled"
+
+
+def test_run_round_reconciles_existing_open_order_when_symbol_missing_from_candidates() -> None:
+    trade_gateway = SequencedTradeGateway(
+        order_statuses=[("filled", 200, 0, "BK_1")],
+        execution_reports=[(_execution(200),)],
+    )
+    execution_manager = OrderExecutionStateStore(logger=None)
+    execution_manager.update_state(
+        "SHSE.600036",
+        OrderExecutionState.submitted,
+        cl_ord_id="CL_EXIST",
+        broker_order_id="BK_1",
+        trigger_reason="take_profit_triggered",
+        requested_volume=200,
+        remaining_volume=200,
+        submit_accepted=True,
+        last_order_status="submitted",
+    )
+    service = AutoSellService(
+        trade_gateway=trade_gateway,
+        candidate_pipeline=FakeCandidatePipeline(rounds=[_candidate_round(candidates=())]),
+        execution_state_manager=execution_manager,
+        logger=logging.getLogger("test"),
+        clock=_now,
+        timer=FakeTimer([0.0, 0.1, 0.2]),
+        sleep=lambda seconds: None,
+    )
+
+    report = service.run_round(config=_config(), round_no=2, reconcile_timeout_seconds=5)
+
+    assert trade_gateway.submit_calls == 0
+    assert trade_gateway.query_order_status_calls == 1
+    assert report.execution_details[-1].symbol == "SHSE.600036"
+    assert report.execution_details[-1].execution_state == "filled"
+    assert report.execution_details[-1].decision_can_submit_sell is False
+
+
 def test_run_round_emits_block_detail_with_decision_projection() -> None:
     trade_gateway = SequencedTradeGateway()
     candidate = _candidate(_position(volume=250, available_volume=201))

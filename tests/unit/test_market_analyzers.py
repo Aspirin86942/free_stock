@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import date, timedelta
 from decimal import Decimal
 
+import pytest
+
 from gmtrade_live.market_models import DailyBar
 from gmtrade_live.services.market_emotion_analyzer import MarketEmotionAnalyzer
 from gmtrade_live.services.market_profit_effect_analyzer import MarketProfitEffectAnalyzer
@@ -82,6 +84,8 @@ def _bar(
     volume: int = 100,
     amount: str = "1000",
     turnover_rate: str | None = None,
+    suspended: bool = False,
+    has_trade: bool = True,
 ) -> DailyBar:
     return DailyBar(
         symbol=symbol,
@@ -95,8 +99,8 @@ def _bar(
         amount=Decimal(amount),
         turnover_rate=Decimal(turnover_rate) if turnover_rate is not None else None,
         is_st=False,
-        suspended=False,
-        has_trade=True,
+        suspended=suspended,
+        has_trade=has_trade,
     )
 
 
@@ -183,6 +187,41 @@ def test_profit_effect_analyzer_excludes_hot_stock_listed_for_fewer_than_250_tra
     assert metrics.hot_stock_4d_avg_return is None
 
 
+def test_profit_effect_analyzer_skips_suspended_hot_stock_endpoint() -> None:
+    trade_dates = [date(2026, 4, 16) + timedelta(days=offset) for offset in range(5)]
+    bars = [
+        _bar(symbol="AAA", trade_date=trade_dates[0], close="10", pre_close="9.8", high="10", turnover_rate="12"),
+        _bar(symbol="AAA", trade_date=trade_dates[1], close="10.5", pre_close="10", high="10.5", turnover_rate="12"),
+        _bar(symbol="AAA", trade_date=trade_dates[2], close="11", pre_close="10.5", high="11", turnover_rate="12"),
+        _bar(symbol="AAA", trade_date=trade_dates[3], close="11.5", pre_close="11", high="11.5", turnover_rate="12"),
+        _bar(
+            symbol="AAA",
+            trade_date=trade_dates[4],
+            close="0",
+            pre_close="11.5",
+            high="0",
+            volume=0,
+            amount="0",
+            turnover_rate="12",
+            suspended=True,
+            has_trade=False,
+        ),
+        _bar(symbol="BBB", trade_date=trade_dates[0], close="10", pre_close="9.8", high="10", turnover_rate="12"),
+        _bar(symbol="BBB", trade_date=trade_dates[1], close="10.5", pre_close="10", high="10.5", turnover_rate="12"),
+        _bar(symbol="BBB", trade_date=trade_dates[2], close="11", pre_close="10.5", high="11", turnover_rate="12"),
+        _bar(symbol="BBB", trade_date=trade_dates[3], close="11.5", pre_close="11", high="11.5", turnover_rate="12"),
+        _bar(symbol="BBB", trade_date=trade_dates[4], close="12", pre_close="11.5", high="12", turnover_rate="12"),
+    ]
+    analyzer = MarketProfitEffectAnalyzer(
+        _FakeRepository(bars),
+        hot_stock_resolver=_FakeHotStockResolver({"AAA", "BBB"}),
+    )  # type: ignore[arg-type]
+
+    metrics = analyzer.calculate(trade_dates[-1])
+
+    assert metrics.hot_stock_4d_avg_return == Decimal("0.2")
+
+
 def test_tolerance_analyzer_calculates_broken_limit_and_hot_stock_metrics() -> None:
     analyzer = MarketToleranceAnalyzer(
         _FakeRepository(_build_bars()),
@@ -234,3 +273,20 @@ def test_emotion_analyzer_calculates_broken_ratio_and_three_day_breakout() -> No
     assert metrics.pct_above_9_5_count >= 1
     assert metrics.broken_limit_up_ratio is not None
     assert metrics.pct_above_30_in_3d_count >= 1
+
+
+def test_emotion_analyzer_skips_invalid_pre_close_and_logs_audit(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    trade_date = date(2026, 4, 20)
+    bars = [
+        _bar(symbol="BAD", trade_date=trade_date, close="10", pre_close="0", high="10"),
+        _bar(symbol="GOOD", trade_date=trade_date, close="11", pre_close="10", high="11"),
+    ]
+    analyzer = MarketEmotionAnalyzer(_FakeRepository(bars))  # type: ignore[arg-type]
+
+    metrics = analyzer.calculate(trade_date)
+
+    assert metrics.pct_above_9_5_count == 1
+    assert "invalid_price_bar_skipped" in caplog.text
+    assert "BAD" in caplog.text

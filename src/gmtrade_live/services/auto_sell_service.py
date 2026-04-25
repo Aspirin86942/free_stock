@@ -16,12 +16,14 @@ from gmtrade_live.gateways.protocols import TradeGateway
 from gmtrade_live.models import (
     AutoSellRoundReport,
     AutoSellRoundSummary,
+    DecisionLifecycleState,
     DecisionPositionStateSnapshot,
     DecisionResult,
     OrderExecutionSnapshot,
     OrderRequest,
     OrderStatusSnapshot,
     SellBlockDetail,
+    SellCandidate,
     SellExecutionDetail,
 )
 from gmtrade_live.services.order_execution_state import (
@@ -152,10 +154,16 @@ class AutoSellService:
         changed_symbols: set[str] = set()
         submitted_count = 0
 
-        tracked_symbols: set[str] = set()
+        tracked_symbols = self._collect_unclosed_execution_symbols()
         pending_change_tags: dict[str, tuple[str, ...]] = {}
-        decision_by_symbol: dict[str, DecisionResult] = {}
-        decision_state_by_symbol: dict[str, DecisionPositionStateSnapshot] = {}
+        candidate_by_symbol = {
+            candidate.decision.symbol: candidate for candidate in candidate_round.candidates
+        }
+        decision_by_symbol, decision_state_by_symbol = self._build_reconcile_projection_maps(
+            tracked_symbols=tracked_symbols,
+            candidate_by_symbol=candidate_by_symbol,
+            now=now,
+        )
 
         for candidate in candidate_round.candidates:
             decision, decision_state = candidate.decision, candidate.state_snapshot
@@ -163,11 +171,14 @@ class AutoSellService:
             decision_by_symbol[symbol] = decision
             decision_state_by_symbol[symbol] = decision_state
 
-            if not decision.can_submit_sell:
+            execution_snapshot = self._execution_state_manager.get_state(symbol)
+            if self._execution_state_manager.has_open_order(symbol) or _should_wait_for_terminal_audit(
+                execution_snapshot
+            ):
+                tracked_symbols.add(symbol)
                 continue
 
-            if self._execution_state_manager.has_open_order(symbol):
-                tracked_symbols.add(symbol)
+            if not decision.can_submit_sell:
                 continue
 
             quantity_plan = build_sell_quantity_plan(
@@ -257,6 +268,94 @@ class AutoSellService:
             ),
             block_details=tuple(block_details),
             execution_details=tuple(execution_details),
+        )
+
+    def _collect_unclosed_execution_symbols(self) -> set[str]:
+        """从执行状态机收集仍需收口的标的，避免被当前卖出信号变化打断。"""
+        return {
+            snapshot.symbol
+            for snapshot in self._execution_state_manager.active_states()
+            if self._execution_state_manager.has_open_order(snapshot.symbol)
+            or _should_wait_for_terminal_audit(snapshot)
+        }
+
+    def _build_reconcile_projection_maps(
+        self,
+        *,
+        tracked_symbols: set[str],
+        candidate_by_symbol: dict[str, SellCandidate],
+        now: datetime,
+    ) -> tuple[dict[str, DecisionResult], dict[str, DecisionPositionStateSnapshot]]:
+        """为不在本轮信号里的在途订单补齐只读决策投影。"""
+        decision_by_symbol: dict[str, DecisionResult] = {}
+        decision_state_by_symbol: dict[str, DecisionPositionStateSnapshot] = {}
+        for symbol in tracked_symbols:
+            candidate = candidate_by_symbol.get(symbol)
+            if candidate is not None:
+                decision_by_symbol[symbol] = candidate.decision
+                decision_state_by_symbol[symbol] = candidate.state_snapshot
+                continue
+
+            snapshot = self._execution_state_manager.get_state(symbol)
+            decision_by_symbol[symbol] = self._build_execution_only_decision_projection(
+                symbol=symbol,
+                snapshot=snapshot,
+                now=now,
+            )
+            decision_state_by_symbol[symbol] = self._build_execution_only_state_projection(
+                symbol=symbol,
+                snapshot=snapshot,
+                now=now,
+            )
+        return decision_by_symbol, decision_state_by_symbol
+
+    def _build_execution_only_decision_projection(
+        self,
+        *,
+        symbol: str,
+        snapshot: OrderExecutionStateSnapshot,
+        now: datetime,
+    ) -> DecisionResult:
+        """为脱离当前候选集的在途订单构造保守决策投影。"""
+        return DecisionResult(
+            symbol=symbol,
+            should_sell=False,
+            can_submit_sell=False,
+            trigger_reason=snapshot.trigger_reason,
+            block_reason="execution_reconcile_only",
+            current_price=Decimal("0"),
+            cost_price=Decimal("0"),
+            take_profit_price=Decimal("0"),
+            stop_loss_price=Decimal("0"),
+            volume=snapshot.requested_volume,
+            available_volume=max(snapshot.remaining_volume, 0),
+            sellable_now=False,
+            session_state="execution_reconcile_only",
+            evaluated_at=now,
+        )
+
+    def _build_execution_only_state_projection(
+        self,
+        *,
+        symbol: str,
+        snapshot: OrderExecutionStateSnapshot,
+        now: datetime,
+    ) -> DecisionPositionStateSnapshot:
+        """为脱离当前候选集的在途订单构造保守决策状态投影。"""
+        return DecisionPositionStateSnapshot(
+            symbol=symbol,
+            lifecycle_state=DecisionLifecycleState.tombstone,
+            has_position=False,
+            sellable_now=False,
+            volume=snapshot.requested_volume,
+            available_volume=max(snapshot.remaining_volume, 0),
+            first_seen_at=now,
+            last_seen_at=now,
+            disappeared_at=now,
+            tombstone_rounds=1,
+            last_trigger_reason=snapshot.trigger_reason,
+            last_block_reason="execution_reconcile_only",
+            last_decision_at=now,
         )
 
     def _submit_new_order(

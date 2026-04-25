@@ -271,8 +271,8 @@ def _resolve_env_recursive(value: Any, field_path: str) -> Any:
     return _resolve_env(value, field_path)
 
 
-def load_config(config_path: Path) -> AppConfig:
-    """读取 YAML 配置并转换为类型安全的应用配置（向后兼容，用于自动交易主链）。"""
+def _load_yaml_mapping(config_path: Path) -> dict[str, Any]:
+    """读取 YAML 文件并确保根节点是字典。"""
     if not config_path.exists():
         _raise("config.not_found", "配置文件不存在", context={"path": str(config_path)})
 
@@ -287,6 +287,11 @@ def load_config(config_path: Path) -> AppConfig:
 
     if not isinstance(raw, dict):
         _raise("config.invalid_root", "配置文件根节点必须是字典结构")
+    return raw
+
+
+def _build_app_config_from_legacy_mapping(raw: dict[str, Any]) -> AppConfig:
+    """从旧版顶层字段配置构建 AppConfig。"""
 
     for field_name in _REQUIRED_FIELDS:
         if field_name not in raw:
@@ -328,22 +333,91 @@ def load_config(config_path: Path) -> AppConfig:
     )
 
 
+def _require_mapping(raw: dict[str, Any], section_name: str) -> dict[str, Any]:
+    """读取嵌套配置块；缺少或类型错误时给出结构化配置错误。"""
+    section = raw.get(section_name)
+    if not isinstance(section, dict):
+        _raise(
+            "config.invalid_section",
+            f"{section_name} 配置块必须是字典结构",
+            context={"section": section_name},
+        )
+    return section
+
+
+def _require_non_empty_value(
+    raw: dict[str, Any],
+    field_name: str,
+    *,
+    fallback: Any | None = None,
+) -> Any:
+    """读取必需值，兼容“主字段优先、共享字段兜底”的迁移期配置。"""
+    value = raw.get(field_name)
+    if value in (None, ""):
+        value = fallback
+    if value in (None, ""):
+        _raise(
+            "config.missing_field",
+            f"缺少必填字段 {field_name}",
+            context={"field": field_name},
+        )
+    return value
+
+
+def _build_app_config_from_nested_mapping(raw: dict[str, Any]) -> AppConfig:
+    """从新版嵌套配置派生旧入口仍需使用的 AppConfig。"""
+    gm_raw = _resolve_env_recursive(_require_mapping(raw, "gm"), "gm")
+    trade_raw = _resolve_env_recursive(_require_mapping(raw, "trade"), "trade")
+    log_dir = _resolve_env(raw.get("log_dir", "logs"), "log_dir")
+
+    # 迁移期允许 trade.token 覆盖 gm.token；绝大多数场景仍由 gm.token 统一承载掘金 Token。
+    token = _require_non_empty_value(
+        trade_raw,
+        "token",
+        fallback=gm_raw.get("token"),
+    )
+
+    return AppConfig(
+        account_id=str(_require_non_empty_value(trade_raw, "account_id")),
+        token=str(token),
+        strategy_name=str(trade_raw.get("strategy_name", "gmtrade-live-auto-sell")),
+        poll_interval_seconds=_parse_positive_int(
+            trade_raw.get("poll_interval_seconds", 5),
+            "trade.poll_interval_seconds",
+        ),
+        take_profit_ratio=_parse_decimal(
+            trade_raw.get("take_profit_ratio", "0.015"),
+            "trade.take_profit_ratio",
+        ),
+        stop_loss_ratio=_parse_decimal(
+            trade_raw.get("stop_loss_ratio", "0.02"),
+            "trade.stop_loss_ratio",
+        ),
+        sell_quantity_ratio=_parse_sell_quantity_ratio(
+            trade_raw.get("sell_quantity_ratio", "0.02"),
+            "trade.sell_quantity_ratio",
+        ),
+        market_session_mode=_parse_market_session_mode(
+            trade_raw.get("market_session_mode", "a_share"),
+            "trade.market_session_mode",
+        ),
+        log_dir=Path(str(log_dir)),
+        timezone=str(gm_raw.get("timezone", "Asia/Shanghai")),
+        gmtrade_endpoint=str(gm_raw.get("endpoint", "127.0.0.1:7001")),
+    )
+
+
+def load_config(config_path: Path) -> AppConfig:
+    """读取 YAML 配置并转换为类型安全的应用配置（兼容旧版顶层与新版嵌套结构）。"""
+    raw = _load_yaml_mapping(config_path)
+    if isinstance(raw.get("trade"), dict) and isinstance(raw.get("gm"), dict):
+        return _build_app_config_from_nested_mapping(raw)
+    return _build_app_config_from_legacy_mapping(raw)
+
+
 def load_runtime_config(config_path: Path) -> RuntimeConfig:
     """读取嵌套 YAML 配置并转换为运行时配置（用于 scheduler 和盘后分析）。"""
-    if not config_path.exists():
-        _raise("config.not_found", "配置文件不存在", context={"path": str(config_path)})
-
-    try:
-        raw = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    except yaml.YAMLError as exc:
-        _raise(
-            "config.invalid_yaml",
-            "配置文件不是合法 YAML",
-            context={"path": str(config_path), "reason": str(exc)},
-        )
-
-    if not isinstance(raw, dict):
-        _raise("config.invalid_root", "配置文件根节点必须是字典结构")
+    raw = _load_yaml_mapping(config_path)
 
     # 递归解析环境变量
     resolved = _resolve_env_recursive(raw, "root")

@@ -50,6 +50,70 @@ def test_load_config_reads_and_resolves_environment_values(
     assert config.market_session_mode == "a_share"
 
 
+def test_load_config_derives_app_config_from_nested_runtime_sections(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GM_ACCOUNT_ID", "nested-account")
+    monkeypatch.setenv("GM_TOKEN", "gm-token")
+    monkeypatch.setenv("TRADE_TOKEN", "trade-token")
+    monkeypatch.setenv("MYSQL_USER", "demo-user")
+    monkeypatch.setenv("MYSQL_PASSWORD", "demo-password")
+    monkeypatch.setenv("FEISHU_WEBHOOK", "https://example.invalid/webhook")
+
+    config_file = tmp_path / "runtime.yaml"
+    config_file.write_text(
+        "\n".join(
+            [
+                "gm:",
+                "  token: ${GM_TOKEN}",
+                "  endpoint: 127.0.0.1:7001",
+                "  timezone: Asia/Shanghai",
+                "trade:",
+                "  enabled: false",
+                "  account_id: ${GM_ACCOUNT_ID}",
+                "  token: ${TRADE_TOKEN}",
+                "  strategy_name: gmtrade-live-auto-sell",
+                "  poll_interval_seconds: 5",
+                "  take_profit_ratio: '0.015'",
+                "  stop_loss_ratio: '0.02'",
+                "  sell_quantity_ratio: '0.02'",
+                "  market_session_mode: a_share",
+                "market_analysis:",
+                "  enabled: true",
+                "  universe: ashare_main_gem_star",
+                "  history_years: 3",
+                "  recent_trade_days: 10",
+                "  report_time: '19:15'",
+                "mysql:",
+                "  host: 127.0.0.1",
+                "  port: 3306",
+                "  database: market_data",
+                "  user: ${MYSQL_USER}",
+                "  password: ${MYSQL_PASSWORD}",
+                "feishu:",
+                "  webhook: ${FEISHU_WEBHOOK}",
+                "scheduler:",
+                "  enabled: true",
+                "  retry_interval_minutes: 10",
+                "  max_attempts: 3",
+                "log_dir: logs",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_config(config_file)
+
+    assert isinstance(config, AppConfig)
+    assert config.account_id == "nested-account"
+    assert config.token == "trade-token"
+    assert config.strategy_name == "gmtrade-live-auto-sell"
+    assert config.take_profit_ratio == Decimal("0.015")
+    assert config.gmtrade_endpoint == "127.0.0.1:7001"
+    assert config.timezone == "Asia/Shanghai"
+
+
 def test_load_config_rejects_missing_required_field(tmp_path: Path) -> None:
     config_file = tmp_path / "broken.yaml"
     config_file.write_text("account_id: demo-account\n", encoding="utf-8")

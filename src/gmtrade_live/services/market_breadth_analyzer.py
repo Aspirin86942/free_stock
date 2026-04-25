@@ -7,6 +7,10 @@ from datetime import date
 from decimal import Decimal
 
 from gmtrade_live.market_models import DailyBar, MarketBreadthMetrics
+from gmtrade_live.services.market_bar_filters import (
+    filter_price_calculable_bars,
+    filter_tradable_bars,
+)
 from gmtrade_live.services.market_repository_cache import MarketDataRepository
 
 logger = logging.getLogger(__name__)
@@ -40,8 +44,13 @@ class MarketBreadthAnalyzer:
                 new_low_60d_count=0,
             )
 
-        # 过滤有效交易数据（排除停牌和无交易的股票）
-        valid_bars = [bar for bar in bars if bar.has_trade and not bar.suspended]
+        # 先排除停牌/无交易，再跳过 pre_close 异常的单行脏数据，避免个别坏行中断整份日报。
+        tradable_bars = filter_tradable_bars(bars)
+        valid_bars = filter_price_calculable_bars(
+            tradable_bars,
+            logger=logger,
+            context="market_breadth",
+        )
 
         # 计算涨跌家数（对比昨收价）
         up_count = sum(1 for bar in valid_bars if bar.close > bar.pre_close)

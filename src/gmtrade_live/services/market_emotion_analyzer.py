@@ -7,6 +7,10 @@ from datetime import date
 from decimal import Decimal
 
 from gmtrade_live.market_models import DailyBar, EmotionMetrics
+from gmtrade_live.services.market_bar_filters import (
+    filter_price_calculable_bars,
+    filter_tradable_bars,
+)
 from gmtrade_live.services.market_repository_cache import MarketDataRepository
 
 logger = logging.getLogger(__name__)
@@ -34,8 +38,13 @@ class MarketEmotionAnalyzer:
                 pct_above_30_in_3d_count=0,
             )
 
-        # 过滤有效交易数据
-        valid_bars = [bar for bar in bars if bar.has_trade and not bar.suspended]
+        # 先排除停牌/无交易，再跳过 pre_close 异常的单行脏数据，避免情绪计算被坏行中断。
+        tradable_bars = filter_tradable_bars(bars)
+        valid_bars = filter_price_calculable_bars(
+            tradable_bars,
+            logger=logger,
+            context="market_emotion",
+        )
 
         # 计算涨幅 >9.5% 和跌幅 <-9.5% 的数量
         pct_above_9_5_count = 0

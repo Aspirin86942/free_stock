@@ -42,7 +42,9 @@ class MarketDataSyncService:
     def sync(self) -> SyncResult:
         """执行同步：首次三年全量回补或增量补数。"""
         # 1. 获取最后成功同步的交易日
-        last_success_date = self.repository.get_last_success_trade_date("market_daily_sync")
+        last_success_date = self.repository.get_last_success_trade_date(
+            "market_daily_sync"
+        )
         latest_trade_date_in_db = self.repository.get_latest_trade_date_in_daily_bar()
 
         effective_last_success_date = last_success_date
@@ -73,9 +75,13 @@ class MarketDataSyncService:
         # 2. 确定同步起止日期
         if effective_last_success_date is None:
             # 首次同步：回补近 N 年
-            start_date = self.gateway.get_trade_date_n_years_ago(self.config.history_years)
+            start_date = self.gateway.get_trade_date_n_years_ago(
+                self.config.history_years
+            )
             is_first_sync = True
-            logger.info(f"首次同步，回补近 {self.config.history_years} 年数据，起始日期: {start_date}")
+            logger.info(
+                f"首次同步，回补近 {self.config.history_years} 年数据，起始日期: {start_date}"
+            )
         else:
             # 增量同步：从上次成功日期的下一个交易日开始
             start_date = self.gateway.get_next_trade_date(effective_last_success_date)
@@ -110,7 +116,9 @@ class MarketDataSyncService:
                 )
 
             repaired_rows = self._repair_recent_turnover_rates(
-                latest_trade_date=latest_trade_date_in_db or effective_last_success_date or end_date
+                latest_trade_date=latest_trade_date_in_db
+                or effective_last_success_date
+                or end_date
             )
             return SyncResult(
                 latest_trade_date=effective_last_success_date or latest_trade_date_in_db or end_date,
@@ -150,13 +158,17 @@ class MarketDataSyncService:
                 or latest_synced_trade_date > effective_last_success_date
             )
         ):
-            self.repository.save_last_success_trade_date("market_daily_sync", latest_synced_trade_date)
+            self.repository.save_last_success_trade_date(
+                "market_daily_sync", latest_synced_trade_date
+            )
             logger.info(f"同步完成，checkpoint 已更新至: {latest_synced_trade_date}")
         else:
             logger.info("本轮无新增落库交易日，checkpoint 不推进")
 
         return SyncResult(
-            latest_trade_date=latest_synced_trade_date or latest_trade_date_in_db or end_date,
+            latest_trade_date=latest_synced_trade_date
+            or latest_trade_date_in_db
+            or end_date,
             inserted_rows=total_inserted,
             updated_rows=total_updated,
             is_first_sync=is_first_sync,
@@ -246,9 +258,11 @@ class MarketDataSyncService:
         if latest_trade_date is None:
             return 0
 
-        trade_dates_needing_repair = self.repository.get_trade_dates_with_missing_turnover(
-            end_date=latest_trade_date,
-            limit=self._TURNOVER_REPAIR_TRADE_DAYS,
+        trade_dates_needing_repair = (
+            self.repository.get_trade_dates_with_missing_turnover(
+                end_date=latest_trade_date,
+                limit=self._TURNOVER_REPAIR_TRADE_DAYS,
+            )
         )
         if not trade_dates_needing_repair:
             logger.info(

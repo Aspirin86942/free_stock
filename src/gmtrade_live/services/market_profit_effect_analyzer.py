@@ -8,6 +8,7 @@ from decimal import Decimal
 
 from gmtrade_live.market_models import DailyBar, ProfitEffectMetrics
 from gmtrade_live.services.hot_stock_resolver import HotStockResolver
+from gmtrade_live.services.market_bar_filters import is_valid_return_bar
 from gmtrade_live.services.market_repository_cache import MarketDataRepository
 
 logger = logging.getLogger(__name__)
@@ -85,11 +86,8 @@ class MarketProfitEffectAnalyzer:
             previous_bar = previous_by_symbol.get(symbol)
             current_bar = current_by_symbol.get(symbol)
             if (
-                previous_bar is None
-                or current_bar is None
-                or previous_bar.close <= Decimal("0")
-                or not current_bar.has_trade
-                or current_bar.suspended
+                not is_valid_return_bar(previous_bar)
+                or not is_valid_return_bar(current_bar)
             ):
                 continue
             returns.append((current_bar.close - previous_bar.close) / previous_bar.close)
@@ -129,7 +127,7 @@ class MarketProfitEffectAnalyzer:
             symbol_bars = bars_by_symbol.get(symbol, {})
             start_bar = symbol_bars.get(start_trade_date)
             end_bar = symbol_bars.get(trade_date)
-            if start_bar is None or end_bar is None or start_bar.close <= Decimal("0"):
+            if not is_valid_return_bar(start_bar) or not is_valid_return_bar(end_bar):
                 continue
             returns.append((end_bar.close - start_bar.close) / start_bar.close)
 
