@@ -73,6 +73,54 @@ def test_get_security_master_filters_by_board(
     assert result[2].board == "main"
 
 
+def test_get_security_master_treats_szse_30xxxx_as_gem(
+    gateway: GMHistoryMarketGateway, mock_api: MagicMock
+) -> None:
+    """测试深市 30 段股票统一按创业板处理。"""
+    mock_api.get_instruments.return_value = [
+        {
+            "symbol": "SHSE.688001",
+            "exchange": "SHSE",
+            "sec_name": "科创板股票",
+            "listed_date": "2020-01-01 00:00:00",
+        },
+        {
+            "symbol": "SZSE.300001",
+            "exchange": "SZSE",
+            "sec_name": "创业板 300",
+            "listed_date": "2015-01-01 00:00:00",
+        },
+        {
+            "symbol": "SZSE.301001",
+            "exchange": "SZSE",
+            "sec_name": "创业板 301",
+            "listed_date": "2021-01-01 00:00:00",
+        },
+        {
+            "symbol": "SHSE.600001",
+            "exchange": "SHSE",
+            "sec_name": "主板股票",
+            "listed_date": "2010-01-01 00:00:00",
+        },
+        {
+            "symbol": "BJSE.830001",
+            "exchange": "BJSE",
+            "sec_name": "北交所股票",
+            "listed_date": "2020-01-01 00:00:00",
+        },
+    ]
+
+    result = gateway.get_security_master("ashare_main_gem_star")
+
+    symbol_to_board = {security.symbol: security.board for security in result}
+    assert symbol_to_board == {
+        "SHSE.688001": "star",
+        "SZSE.300001": "gem",
+        "SZSE.301001": "gem",
+        "SHSE.600001": "main",
+    }
+
+
 def test_fetch_daily_bars_returns_empty_for_empty_symbols(
     gateway: GMHistoryMarketGateway, mock_api: MagicMock
 ) -> None:

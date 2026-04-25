@@ -41,7 +41,7 @@ class GMHistoryMarketGateway:
             )
 
         # 掘金 API: get_instruments(exchanges, sec_types, names, fields)
-        # 沪深主板: SHSE + SZSE，创业板: SZSE.300xxx，科创板: SHSE.688xxx
+        # 沪深主板: SHSE + SZSE，创业板: SZSE.30xxxx，科创板: SHSE.688xxx
         try:
             instruments = self._api.get_instruments(
                 exchanges="SHSE,SZSE",
@@ -66,7 +66,7 @@ class GMHistoryMarketGateway:
             # 判断板块
             if symbol.startswith("SHSE.688"):
                 board = "star"
-            elif symbol.startswith("SZSE.300"):
+            elif symbol.startswith("SZSE.30"):
                 board = "gem"
             elif symbol.startswith("SHSE.6") or symbol.startswith("SZSE.0"):
                 board = "main"
