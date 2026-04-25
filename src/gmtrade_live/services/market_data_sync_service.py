@@ -98,6 +98,8 @@ class MarketDataSyncService:
         self.repository.upsert_security_master(securities)
         logger.info(f"股票池同步完成，共 {len(securities)} 只股票")
 
+        backfill_inserted_rows = 0
+
         # 5. 如果没有普通增量窗口，优先回补新 symbol 历史
         if start_date > end_date:
             logger.info("没有新数据需要同步")
@@ -116,20 +118,28 @@ class MarketDataSyncService:
             return SyncResult(
                 latest_trade_date=effective_last_success_date or latest_trade_date_in_db or end_date,
                 inserted_rows=repaired_rows,
-                updated_rows=0,
-                is_first_sync=is_first_sync,
+                    updated_rows=0,
+                    is_first_sync=is_first_sync,
+                )
+
+        # 6. 有普通增量窗口时，新纳入 symbol 先回补历史，再执行全量增量同步
+        if newly_discovered_symbols and not is_first_sync:
+            backfill_inserted_rows, _ = self._backfill_new_symbols(
+                newly_discovered_symbols,
+                end_date,
             )
 
-        # 6. 批量同步日线数据（按股票分批）
+        # 7. 批量同步日线数据（按股票分批）
         total_inserted, latest_batch_trade_date = self._sync_symbol_batches(
             symbols=current_symbols,
             start_date=start_date,
             end_date=end_date,
         )
+        total_inserted += backfill_inserted_rows
         total_updated = 0
         latest_synced_trade_date = latest_batch_trade_date or effective_last_success_date
 
-        # 7. 更新 checkpoint
+        # 8. 更新 checkpoint（仅由普通增量窗口驱动，不受新 symbol 历史回补影响）
         if (
             latest_synced_trade_date is not None
             and (

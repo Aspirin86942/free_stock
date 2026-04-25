@@ -2,7 +2,7 @@
 
 from datetime import date
 from decimal import Decimal
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 import pytest
 
@@ -294,6 +294,102 @@ def test_sync_backfills_new_symbols_even_when_no_incremental_window(
         date(2026, 4, 16),
     )
     mock_repository.save_last_success_trade_date.assert_not_called()
+
+
+def test_sync_backfills_new_symbols_before_incremental_sync(
+    service: MarketDataSyncService,
+    mock_gateway: MagicMock,
+    mock_repository: MagicMock,
+) -> None:
+    """测试新纳入 symbol 会先走历史回补，再走普通增量。"""
+    securities = [
+        SecurityMaster(
+            symbol="SHSE.600001",
+            exchange="SHSE",
+            name="老股票",
+            board="main",
+            listed_date=date(2020, 1, 1),
+        ),
+        SecurityMaster(
+            symbol="SZSE.301001",
+            exchange="SZSE",
+            name="新纳入创业板",
+            board="gem",
+            listed_date=date(2021, 1, 1),
+        ),
+    ]
+    mock_repository.get_last_success_trade_date.return_value = date(2026, 4, 15)
+    mock_repository.get_latest_trade_date_in_daily_bar.return_value = date(2026, 4, 15)
+    mock_repository.get_all_symbols.return_value = ["SHSE.600001"]
+    mock_gateway.get_next_trade_date.return_value = date(2026, 4, 16)
+    mock_gateway.get_latest_trade_date.return_value = date(2026, 4, 16)
+    mock_gateway.get_trade_date_n_years_ago.return_value = date(2023, 4, 16)
+    mock_gateway.get_security_master.return_value = securities
+    mock_gateway.fetch_daily_bars.side_effect = [
+        [
+            DailyBar(
+                symbol="SZSE.301001",
+                trade_date=date(2026, 4, 16),
+                open=Decimal("10"),
+                high=Decimal("10.5"),
+                low=Decimal("9.8"),
+                close=Decimal("10.2"),
+                pre_close=Decimal("10"),
+                volume=1000,
+                amount=Decimal("10000"),
+                turnover_rate=None,
+                is_st=False,
+                suspended=False,
+                has_trade=True,
+            )
+        ],
+        [
+            DailyBar(
+                symbol="SHSE.600001",
+                trade_date=date(2026, 4, 16),
+                open=Decimal("10"),
+                high=Decimal("10.5"),
+                low=Decimal("9.8"),
+                close=Decimal("10.2"),
+                pre_close=Decimal("10"),
+                volume=1000,
+                amount=Decimal("10000"),
+                turnover_rate=None,
+                is_st=False,
+                suspended=False,
+                has_trade=True,
+            ),
+            DailyBar(
+                symbol="SZSE.301001",
+                trade_date=date(2026, 4, 16),
+                open=Decimal("10"),
+                high=Decimal("10.5"),
+                low=Decimal("9.8"),
+                close=Decimal("10.2"),
+                pre_close=Decimal("10"),
+                volume=1000,
+                amount=Decimal("10000"),
+                turnover_rate=None,
+                is_st=False,
+                suspended=False,
+                has_trade=True,
+            ),
+        ],
+    ]
+    mock_repository.upsert_daily_bars.side_effect = [1, 2]
+
+    result = service.sync()
+
+    assert result.inserted_rows == 3
+    assert result.latest_trade_date == date(2026, 4, 16)
+    assert mock_gateway.fetch_daily_bars.call_args_list == [
+        call(["SZSE.301001"], date(2023, 4, 16), date(2026, 4, 16)),
+        call(["SHSE.600001", "SZSE.301001"], date(2026, 4, 16), date(2026, 4, 16)),
+    ]
+    mock_repository.save_last_success_trade_date.assert_called_once_with(
+        "market_daily_sync",
+        date(2026, 4, 16),
+    )
 
 
 def test_sync_batches_symbols_in_chunks(
