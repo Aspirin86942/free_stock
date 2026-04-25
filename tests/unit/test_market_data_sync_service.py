@@ -329,7 +329,7 @@ def test_sync_backfills_new_symbols_before_incremental_sync(
         [
             DailyBar(
                 symbol="SZSE.301001",
-                trade_date=date(2026, 4, 16),
+                trade_date=date(2026, 4, 15),
                 open=Decimal("10"),
                 high=Decimal("10.5"),
                 low=Decimal("9.8"),
@@ -386,6 +386,14 @@ def test_sync_backfills_new_symbols_before_incremental_sync(
         call(["SZSE.301001"], date(2023, 4, 16), date(2026, 4, 16)),
         call(["SHSE.600001", "SZSE.301001"], date(2026, 4, 16), date(2026, 4, 16)),
     ]
+    assert max(
+        bar.trade_date
+        for bar in mock_repository.upsert_daily_bars.call_args_list[0].args[0]
+    ) == date(2026, 4, 15)
+    assert max(
+        bar.trade_date
+        for bar in mock_repository.upsert_daily_bars.call_args_list[1].args[0]
+    ) == date(2026, 4, 16)
     mock_repository.save_last_success_trade_date.assert_called_once_with(
         "market_daily_sync",
         date(2026, 4, 16),
