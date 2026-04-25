@@ -318,10 +318,10 @@ def test_sync_backfills_new_symbols_before_incremental_sync(
             listed_date=date(2021, 1, 1),
         ),
     ]
-    mock_repository.get_last_success_trade_date.return_value = date(2026, 4, 15)
-    mock_repository.get_latest_trade_date_in_daily_bar.return_value = date(2026, 4, 15)
+    mock_repository.get_last_success_trade_date.return_value = date(2026, 4, 14)
+    mock_repository.get_latest_trade_date_in_daily_bar.return_value = date(2026, 4, 14)
     mock_repository.get_all_symbols.return_value = ["SHSE.600001"]
-    mock_gateway.get_next_trade_date.return_value = date(2026, 4, 16)
+    mock_gateway.get_next_trade_date.return_value = date(2026, 4, 15)
     mock_gateway.get_latest_trade_date.return_value = date(2026, 4, 16)
     mock_gateway.get_trade_date_n_years_ago.return_value = date(2023, 4, 16)
     mock_gateway.get_security_master.return_value = securities
@@ -329,7 +329,7 @@ def test_sync_backfills_new_symbols_before_incremental_sync(
         [
             DailyBar(
                 symbol="SZSE.301001",
-                trade_date=date(2026, 4, 15),
+                trade_date=date(2026, 4, 16),
                 open=Decimal("10"),
                 high=Decimal("10.5"),
                 low=Decimal("9.8"),
@@ -346,7 +346,7 @@ def test_sync_backfills_new_symbols_before_incremental_sync(
         [
             DailyBar(
                 symbol="SHSE.600001",
-                trade_date=date(2026, 4, 16),
+                trade_date=date(2026, 4, 15),
                 open=Decimal("10"),
                 high=Decimal("10.5"),
                 low=Decimal("9.8"),
@@ -361,7 +361,7 @@ def test_sync_backfills_new_symbols_before_incremental_sync(
             ),
             DailyBar(
                 symbol="SZSE.301001",
-                trade_date=date(2026, 4, 16),
+                trade_date=date(2026, 4, 15),
                 open=Decimal("10"),
                 high=Decimal("10.5"),
                 low=Decimal("9.8"),
@@ -381,22 +381,22 @@ def test_sync_backfills_new_symbols_before_incremental_sync(
     result = service.sync()
 
     assert result.inserted_rows == 3
-    assert result.latest_trade_date == date(2026, 4, 16)
+    assert result.latest_trade_date == date(2026, 4, 15)
     assert mock_gateway.fetch_daily_bars.call_args_list == [
         call(["SZSE.301001"], date(2023, 4, 16), date(2026, 4, 16)),
-        call(["SHSE.600001", "SZSE.301001"], date(2026, 4, 16), date(2026, 4, 16)),
+        call(["SHSE.600001", "SZSE.301001"], date(2026, 4, 15), date(2026, 4, 16)),
     ]
     assert max(
         bar.trade_date
         for bar in mock_repository.upsert_daily_bars.call_args_list[0].args[0]
-    ) == date(2026, 4, 15)
+    ) == date(2026, 4, 16)
     assert max(
         bar.trade_date
         for bar in mock_repository.upsert_daily_bars.call_args_list[1].args[0]
-    ) == date(2026, 4, 16)
+    ) == date(2026, 4, 15)
     mock_repository.save_last_success_trade_date.assert_called_once_with(
         "market_daily_sync",
-        date(2026, 4, 16),
+        date(2026, 4, 15),
     )
 
 
