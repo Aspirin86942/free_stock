@@ -149,19 +149,30 @@ def test_sync_returns_zero_when_no_new_data(
     mock_gateway: MagicMock,
     mock_repository: MagicMock,
 ) -> None:
-    """测试没有新数据时返回零。"""
-    # 模拟已经是最新数据
+    """测试无普通增量时仍会刷新股票池，但没有新 symbol 时返回零。"""
+    securities = [
+        SecurityMaster(
+            symbol="SHSE.600001",
+            exchange="SHSE",
+            name="测试股票",
+            board="main",
+            listed_date=date(2020, 1, 1),
+        )
+    ]
     mock_repository.get_last_success_trade_date.return_value = date(2026, 4, 16)
     mock_repository.get_latest_trade_date_in_daily_bar.return_value = date(2026, 4, 16)
+    mock_repository.get_all_symbols.return_value = ["SHSE.600001"]
     mock_gateway.get_next_trade_date.return_value = date(2026, 4, 17)
     mock_gateway.get_latest_trade_date.return_value = date(2026, 4, 16)
     mock_repository.get_trade_dates_with_missing_turnover.return_value = []
+    mock_gateway.get_security_master.return_value = securities
 
     result = service.sync()
 
     assert result.inserted_rows == 0
     assert result.latest_trade_date == date(2026, 4, 16)
-    mock_gateway.get_security_master.assert_not_called()
+    mock_gateway.get_security_master.assert_called_once_with("ashare_main_gem_star")
+    mock_repository.upsert_security_master.assert_called_once_with(securities)
     mock_repository.upsert_daily_bars.assert_not_called()
 
 
@@ -170,17 +181,29 @@ def test_sync_repairs_recent_turnover_when_no_new_data(
     mock_gateway: MagicMock,
     mock_repository: MagicMock,
 ) -> None:
-    """测试无新增交易日时会执行近期换手率修复。"""
+    """测试无新增交易日时会先刷新股票池，再执行近期换手率修复。"""
+    securities = [
+        SecurityMaster(
+            symbol="SHSE.600001",
+            exchange="SHSE",
+            name="测试股票",
+            board="main",
+            listed_date=date(2020, 1, 1),
+        )
+    ]
     mock_repository.get_last_success_trade_date.return_value = date(2026, 4, 16)
     mock_repository.get_latest_trade_date_in_daily_bar.return_value = date(2026, 4, 16)
-    mock_gateway.get_next_trade_date.return_value = date(2026, 4, 17)
-    mock_gateway.get_latest_trade_date.return_value = date(2026, 4, 16)
-
     mock_repository.get_trade_dates_with_missing_turnover.return_value = [
         date(2026, 4, 15),
         date(2026, 4, 16),
     ]
-    mock_repository.get_all_symbols.return_value = ["SHSE.600001"]
+    mock_repository.get_all_symbols.side_effect = [
+        ["SHSE.600001"],
+        ["SHSE.600001"],
+    ]
+    mock_gateway.get_next_trade_date.return_value = date(2026, 4, 17)
+    mock_gateway.get_latest_trade_date.return_value = date(2026, 4, 16)
+    mock_gateway.get_security_master.return_value = securities
     mock_gateway.fetch_daily_bars.return_value = [
         DailyBar(
             symbol="SHSE.600001",
@@ -203,12 +226,74 @@ def test_sync_repairs_recent_turnover_when_no_new_data(
     result = service.sync()
 
     assert result.inserted_rows == 1
+    mock_repository.upsert_security_master.assert_called_once_with(securities)
     mock_gateway.fetch_daily_bars.assert_called_once_with(
         ["SHSE.600001"],
         date(2026, 4, 15),
         date(2026, 4, 16),
     )
     mock_repository.upsert_daily_bars.assert_called_once()
+
+
+def test_sync_backfills_new_symbols_even_when_no_incremental_window(
+    service: MarketDataSyncService,
+    mock_gateway: MagicMock,
+    mock_repository: MagicMock,
+) -> None:
+    """测试没有新交易日时，仍会回补新纳入 symbol 的历史数据。"""
+    securities = [
+        SecurityMaster(
+            symbol="SHSE.600001",
+            exchange="SHSE",
+            name="老股票",
+            board="main",
+            listed_date=date(2020, 1, 1),
+        ),
+        SecurityMaster(
+            symbol="SZSE.301001",
+            exchange="SZSE",
+            name="新纳入创业板",
+            board="gem",
+            listed_date=date(2021, 1, 1),
+        ),
+    ]
+    mock_repository.get_last_success_trade_date.return_value = date(2026, 4, 16)
+    mock_repository.get_latest_trade_date_in_daily_bar.return_value = date(2026, 4, 16)
+    mock_repository.get_all_symbols.return_value = ["SHSE.600001"]
+    mock_gateway.get_next_trade_date.return_value = date(2026, 4, 17)
+    mock_gateway.get_latest_trade_date.return_value = date(2026, 4, 16)
+    mock_gateway.get_trade_date_n_years_ago.return_value = date(2023, 4, 16)
+    mock_gateway.get_security_master.return_value = securities
+    mock_gateway.fetch_daily_bars.return_value = [
+        DailyBar(
+            symbol="SZSE.301001",
+            trade_date=date(2026, 4, 16),
+            open=Decimal("10"),
+            high=Decimal("10.5"),
+            low=Decimal("9.8"),
+            close=Decimal("10.2"),
+            pre_close=Decimal("10"),
+            volume=1000,
+            amount=Decimal("10000"),
+            turnover_rate=None,
+            is_st=False,
+            suspended=False,
+            has_trade=True,
+        )
+    ]
+    mock_repository.upsert_daily_bars.return_value = 1
+
+    result = service.sync()
+
+    assert result.inserted_rows == 1
+    assert result.latest_trade_date == date(2026, 4, 16)
+    mock_repository.upsert_security_master.assert_called_once_with(securities)
+    mock_gateway.fetch_daily_bars.assert_called_once_with(
+        ["SZSE.301001"],
+        date(2023, 4, 16),
+        date(2026, 4, 16),
+    )
+    mock_repository.save_last_success_trade_date.assert_not_called()
 
 
 def test_sync_batches_symbols_in_chunks(

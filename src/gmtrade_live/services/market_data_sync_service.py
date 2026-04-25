@@ -27,6 +27,7 @@ class MarketDataSyncService:
     """市场数据同步服务。"""
 
     _TURNOVER_REPAIR_TRADE_DAYS = 2
+    _SYNC_BATCH_SIZE = 50
 
     def __init__(
         self,
@@ -87,9 +88,28 @@ class MarketDataSyncService:
         end_date = self.gateway.get_latest_trade_date()
         logger.info(f"同步截止日期: {end_date}")
 
-        # 4. 如果没有新数据，直接返回
+        # 4. 同步股票池并识别新纳入 symbol
+        securities = self.gateway.get_security_master(self.config.universe)
+        current_symbols = [security.symbol for security in securities]
+        existing_symbols = set(self.repository.get_all_symbols())
+        newly_discovered_symbols = [
+            symbol for symbol in current_symbols if symbol not in existing_symbols
+        ]
+        self.repository.upsert_security_master(securities)
+        logger.info(f"股票池同步完成，共 {len(securities)} 只股票")
+
+        # 5. 如果没有普通增量窗口，优先回补新 symbol 历史
         if start_date > end_date:
             logger.info("没有新数据需要同步")
+            if newly_discovered_symbols:
+                total_inserted, _ = self._backfill_new_symbols(newly_discovered_symbols, end_date)
+                return SyncResult(
+                    latest_trade_date=effective_last_success_date or latest_trade_date_in_db or end_date,
+                    inserted_rows=total_inserted,
+                    updated_rows=0,
+                    is_first_sync=is_first_sync,
+                )
+
             repaired_rows = self._repair_recent_turnover_rates(
                 latest_trade_date=latest_trade_date_in_db or effective_last_success_date or end_date
             )
@@ -100,36 +120,14 @@ class MarketDataSyncService:
                 is_first_sync=is_first_sync,
             )
 
-        # 5. 同步股票池（首次同步或定期更新）
-        securities = self.gateway.get_security_master(self.config.universe)
-        self.repository.upsert_security_master(securities)
-        logger.info(f"股票池同步完成，共 {len(securities)} 只股票")
-
         # 6. 批量同步日线数据（按股票分批）
-        symbols = [s.symbol for s in securities]
-        batch_size = 50  # 每批 50 只股票
-        total_inserted = 0
+        total_inserted, latest_batch_trade_date = self._sync_symbol_batches(
+            symbols=current_symbols,
+            start_date=start_date,
+            end_date=end_date,
+        )
         total_updated = 0
-        latest_synced_trade_date = effective_last_success_date
-
-        for i in range(0, len(symbols), batch_size):
-            batch_symbols = symbols[i : i + batch_size]
-            logger.info(
-                f"同步批次 {i // batch_size + 1}/{(len(symbols) + batch_size - 1) // batch_size}，"
-                f"股票数: {len(batch_symbols)}"
-            )
-
-            bars = self.gateway.fetch_daily_bars(batch_symbols, start_date, end_date)
-            if bars:
-                affected = self.repository.upsert_daily_bars(bars)
-                total_inserted += affected
-                logger.info(f"批次同步完成，影响行数: {affected}")
-                batch_latest_trade_date = max(bar.trade_date for bar in bars)
-                if (
-                    latest_synced_trade_date is None
-                    or batch_latest_trade_date > latest_synced_trade_date
-                ):
-                    latest_synced_trade_date = batch_latest_trade_date
+        latest_synced_trade_date = latest_batch_trade_date or effective_last_success_date
 
         # 7. 更新 checkpoint
         if (
@@ -150,6 +148,62 @@ class MarketDataSyncService:
             updated_rows=total_updated,
             is_first_sync=is_first_sync,
         )
+
+    def _backfill_new_symbols(
+        self,
+        symbols: list[str],
+        end_date: date,
+    ) -> tuple[int, date | None]:
+        """回补新纳入股票在历史窗口内的日线数据。"""
+        if not symbols:
+            return 0, None
+        history_start_date = self.gateway.get_trade_date_n_years_ago(self.config.history_years)
+        logger.info(
+            "无普通增量窗口，开始回补新纳入 symbol 历史数据",
+            extra={
+                "new_symbol_count": len(symbols),
+                "history_start_date": str(history_start_date),
+                "history_end_date": str(end_date),
+            },
+        )
+        return self._sync_symbol_batches(
+            symbols=symbols,
+            start_date=history_start_date,
+            end_date=end_date,
+        )
+
+    def _sync_symbol_batches(
+        self,
+        symbols: list[str],
+        start_date: date,
+        end_date: date,
+    ) -> tuple[int, date | None]:
+        """按批次同步指定 symbol 列表的日线数据。"""
+        total_inserted = 0
+        latest_synced_trade_date: date | None = None
+        if not symbols:
+            return total_inserted, latest_synced_trade_date
+
+        for i in range(0, len(symbols), self._SYNC_BATCH_SIZE):
+            batch_symbols = symbols[i : i + self._SYNC_BATCH_SIZE]
+            logger.info(
+                f"同步批次 {i // self._SYNC_BATCH_SIZE + 1}/"
+                f"{(len(symbols) + self._SYNC_BATCH_SIZE - 1) // self._SYNC_BATCH_SIZE}，"
+                f"股票数: {len(batch_symbols)}"
+            )
+            bars = self.gateway.fetch_daily_bars(batch_symbols, start_date, end_date)
+            if not bars:
+                continue
+            affected = self.repository.upsert_daily_bars(bars)
+            total_inserted += affected
+            logger.info(f"批次同步完成，影响行数: {affected}")
+            batch_latest_trade_date = max(bar.trade_date for bar in bars)
+            if (
+                latest_synced_trade_date is None
+                or batch_latest_trade_date > latest_synced_trade_date
+            ):
+                latest_synced_trade_date = batch_latest_trade_date
+        return total_inserted, latest_synced_trade_date
 
     def _repair_recent_turnover_rates(self, latest_trade_date: date | None) -> int:
         """在无新增交易日时，回补最近窗口的换手率数据。"""
@@ -176,7 +230,6 @@ class MarketDataSyncService:
 
         repair_start_date = trade_dates_needing_repair[0]
         repair_end_date = trade_dates_needing_repair[-1]
-        batch_size = 50
         total_affected = 0
 
         logger.info(
@@ -189,8 +242,8 @@ class MarketDataSyncService:
             },
         )
 
-        for i in range(0, len(symbols), batch_size):
-            batch_symbols = symbols[i : i + batch_size]
+        for i in range(0, len(symbols), self._SYNC_BATCH_SIZE):
+            batch_symbols = symbols[i : i + self._SYNC_BATCH_SIZE]
             bars = self.gateway.fetch_daily_bars(
                 batch_symbols,
                 repair_start_date,
