@@ -91,10 +91,6 @@ class MarketDataSyncService:
         # 4. 同步股票池并识别新纳入 symbol
         securities = self.gateway.get_security_master(self.config.universe)
         current_symbols = [security.symbol for security in securities]
-        existing_symbols = set(self.repository.get_all_symbols())
-        newly_discovered_symbols = [
-            symbol for symbol in current_symbols if symbol not in existing_symbols
-        ]
         self.repository.upsert_security_master(securities)
         logger.info(f"股票池同步完成，共 {len(securities)} 只股票")
 
@@ -103,13 +99,14 @@ class MarketDataSyncService:
         # 5. 如果没有普通增量窗口，优先回补新 symbol 历史
         if start_date > end_date:
             logger.info("没有新数据需要同步")
-            if newly_discovered_symbols:
-                total_inserted, _ = self._backfill_new_symbols(newly_discovered_symbols, end_date)
-                return SyncResult(
-                    latest_trade_date=effective_last_success_date or latest_trade_date_in_db or end_date,
-                    inserted_rows=total_inserted,
-                    updated_rows=0,
-                    is_first_sync=is_first_sync,
+            symbols_needing_history_backfill = self._get_symbols_needing_history_backfill(
+                current_symbols,
+                end_date,
+            )
+            if symbols_needing_history_backfill:
+                backfill_inserted_rows, _ = self._backfill_new_symbols(
+                    symbols_needing_history_backfill,
+                    end_date,
                 )
 
             repaired_rows = self._repair_recent_turnover_rates(
@@ -117,18 +114,23 @@ class MarketDataSyncService:
             )
             return SyncResult(
                 latest_trade_date=effective_last_success_date or latest_trade_date_in_db or end_date,
-                inserted_rows=repaired_rows,
-                    updated_rows=0,
-                    is_first_sync=is_first_sync,
-                )
+                inserted_rows=backfill_inserted_rows + repaired_rows,
+                updated_rows=0,
+                is_first_sync=is_first_sync,
+            )
 
         # 6. 有普通增量窗口时，新纳入 symbol 先回补历史，再执行全量增量同步
-        if newly_discovered_symbols and not is_first_sync:
+        if not is_first_sync:
             coexist_backfill_end_date = effective_last_success_date or end_date
-            backfill_inserted_rows, _ = self._backfill_new_symbols(
-                newly_discovered_symbols,
+            symbols_needing_history_backfill = self._get_symbols_needing_history_backfill(
+                current_symbols,
                 coexist_backfill_end_date,
             )
+            if symbols_needing_history_backfill:
+                backfill_inserted_rows, _ = self._backfill_new_symbols(
+                    symbols_needing_history_backfill,
+                    coexist_backfill_end_date,
+                )
 
         # 7. 批量同步日线数据（按股票分批）
         total_inserted, latest_batch_trade_date = self._sync_symbol_batches(
@@ -159,6 +161,28 @@ class MarketDataSyncService:
             updated_rows=total_updated,
             is_first_sync=is_first_sync,
         )
+
+    def _get_symbols_needing_history_backfill(
+        self,
+        symbols: list[str],
+        backfill_end_date: date,
+    ) -> list[str]:
+        """返回在历史回补窗口内仍无日线数据的 symbol 列表。"""
+        if not symbols:
+            return []
+
+        history_start_date = self.gateway.get_trade_date_n_years_ago(self.config.history_years)
+        if history_start_date > backfill_end_date:
+            return []
+
+        # 这里按“窗口内是否已有任何 bars”判断，确保仅写入 security_master 后失败的重试场景仍能补历史。
+        existing_bars = self.repository.get_daily_bars(
+            symbols,
+            history_start_date,
+            backfill_end_date,
+        )
+        symbols_with_history = {bar.symbol for bar in existing_bars}
+        return [symbol for symbol in symbols if symbol not in symbols_with_history]
 
     def _backfill_new_symbols(
         self,
