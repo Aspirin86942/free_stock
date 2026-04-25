@@ -359,6 +359,50 @@ class MySQLMarketRepository:
                 },
             ) from exc
 
+    def get_symbols_with_daily_bars_in_window(
+        self,
+        symbols: list[str],
+        start_date: date,
+        end_date: date,
+    ) -> list[str]:
+        """返回在指定日期窗口内至少存在一条日线数据的去重 symbol 列表。"""
+        if not self._connection:
+            raise RepositoryError(
+                code="repository.not_connected",
+                message="数据库未连接",
+                retryable=False,
+                context={},
+            )
+
+        if not symbols:
+            return []
+
+        placeholders = ",".join(["%s"] * len(symbols))
+        sql = f"""
+            SELECT DISTINCT symbol
+            FROM market_daily_bar
+            WHERE symbol IN ({placeholders})
+              AND trade_date BETWEEN %s AND %s
+            ORDER BY symbol
+        """
+
+        try:
+            with self._connection.cursor() as cursor:
+                cursor.execute(sql, (*symbols, start_date, end_date))
+                rows = cursor.fetchall()
+            return [str(row["symbol"]) for row in rows if row.get("symbol") is not None]
+        except pymysql.Error as exc:
+            raise RepositoryError(
+                code="repository.query_failed",
+                message=f"查询窗口内存在日线的 symbol 失败: {exc}",
+                retryable=True,
+                context={
+                    "symbol_count": len(symbols),
+                    "start_date": str(start_date),
+                    "end_date": str(end_date),
+                },
+            ) from exc
+
     def get_daily_bars_by_date(self, trade_date: date) -> list[DailyBar]:
         """查询指定交易日所有股票的日线数据。"""
         if not self._connection:

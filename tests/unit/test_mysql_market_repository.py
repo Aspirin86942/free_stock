@@ -103,6 +103,28 @@ def test_get_daily_bars_returns_empty_list_for_empty_symbols(
         assert result == []
 
 
+def test_get_symbols_with_daily_bars_in_window_returns_distinct_symbols(
+    repository: MySQLMarketRepository,
+) -> None:
+    """测试仅返回窗口内存在日线数据的去重 symbol 列表。"""
+    mock_connection = MagicMock()
+    mock_cursor = MagicMock()
+    mock_cursor.fetchall.return_value = [
+        {"symbol": "SHSE.600000"},
+        {"symbol": "SZSE.000001"},
+    ]
+    mock_connection.cursor.return_value.__enter__.return_value = mock_cursor
+
+    with patch.object(repository, "_connection", mock_connection):
+        result = repository.get_symbols_with_daily_bars_in_window(
+            ["SHSE.600000", "SZSE.000001", "SZSE.300001"],
+            date(2026, 4, 1),
+            date(2026, 4, 15),
+        )
+
+    assert result == ["SHSE.600000", "SZSE.000001"]
+
+
 def test_get_recent_trade_dates_returns_sorted_dates(
     repository: MySQLMarketRepository,
 ) -> None:

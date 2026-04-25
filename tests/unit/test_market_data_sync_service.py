@@ -60,10 +60,8 @@ def mock_repository() -> MagicMock:
     repository.get_latest_trade_date_in_daily_bar.return_value = None
     repository.get_trade_dates_with_missing_turnover.return_value = []
     repository.get_all_symbols.return_value = []
-    repository.get_daily_bars.side_effect = (
-        lambda symbols, start_date, end_date: [
-            _make_daily_bar("SHSE.600001", end_date)
-        ]
+    repository.get_symbols_with_daily_bars_in_window.side_effect = (
+        lambda symbols, start_date, end_date: ["SHSE.600001"]
         if "SHSE.600001" in symbols and start_date <= end_date
         else []
     )
@@ -460,7 +458,7 @@ def test_sync_retries_history_backfill_when_symbol_already_in_security_master(
     mock_repository.get_last_success_trade_date.return_value = date(2026, 4, 14)
     mock_repository.get_latest_trade_date_in_daily_bar.return_value = date(2026, 4, 14)
     mock_repository.get_all_symbols.return_value = ["SHSE.600001", "SZSE.301001"]
-    mock_repository.get_daily_bars.return_value = [_make_daily_bar("SHSE.600001", date(2026, 4, 14))]
+    mock_repository.get_symbols_with_daily_bars_in_window.return_value = ["SHSE.600001"]
     mock_gateway.get_next_trade_date.return_value = date(2026, 4, 15)
     mock_gateway.get_latest_trade_date.return_value = date(2026, 4, 16)
     mock_gateway.get_trade_date_n_years_ago.return_value = date(2023, 4, 16)
@@ -517,7 +515,7 @@ def test_sync_runs_backfill_and_turnover_repair_when_no_incremental_window(
         date(2026, 4, 16),
     ]
     mock_repository.get_all_symbols.return_value = ["SHSE.600001", "SZSE.301001"]
-    mock_repository.get_daily_bars.return_value = [_make_daily_bar("SHSE.600001", date(2026, 4, 16))]
+    mock_repository.get_symbols_with_daily_bars_in_window.return_value = ["SHSE.600001"]
     mock_gateway.get_next_trade_date.return_value = date(2026, 4, 17)
     mock_gateway.get_latest_trade_date.return_value = date(2026, 4, 16)
     mock_gateway.get_trade_date_n_years_ago.return_value = date(2023, 4, 16)

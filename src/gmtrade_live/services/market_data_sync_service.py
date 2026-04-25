@@ -176,12 +176,13 @@ class MarketDataSyncService:
             return []
 
         # 这里按“窗口内是否已有任何 bars”判断，确保仅写入 security_master 后失败的重试场景仍能补历史。
-        existing_bars = self.repository.get_daily_bars(
-            symbols,
-            history_start_date,
-            backfill_end_date,
+        symbols_with_history = set(
+            self.repository.get_symbols_with_daily_bars_in_window(
+                symbols,
+                history_start_date,
+                backfill_end_date,
+            )
         )
-        symbols_with_history = {bar.symbol for bar in existing_bars}
         return [symbol for symbol in symbols if symbol not in symbols_with_history]
 
     def _backfill_new_symbols(
