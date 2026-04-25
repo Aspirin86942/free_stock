@@ -301,7 +301,7 @@ def test_sync_backfills_new_symbols_before_incremental_sync(
     mock_gateway: MagicMock,
     mock_repository: MagicMock,
 ) -> None:
-    """测试新纳入 symbol 会先走历史回补，再走普通增量。"""
+    """测试新纳入 symbol 回补与普通增量并存时窗口不重叠。"""
     securities = [
         SecurityMaster(
             symbol="SHSE.600001",
@@ -329,7 +329,7 @@ def test_sync_backfills_new_symbols_before_incremental_sync(
         [
             DailyBar(
                 symbol="SZSE.301001",
-                trade_date=date(2026, 4, 16),
+                trade_date=date(2026, 4, 14),
                 open=Decimal("10"),
                 high=Decimal("10.5"),
                 low=Decimal("9.8"),
@@ -383,13 +383,16 @@ def test_sync_backfills_new_symbols_before_incremental_sync(
     assert result.inserted_rows == 3
     assert result.latest_trade_date == date(2026, 4, 15)
     assert mock_gateway.fetch_daily_bars.call_args_list == [
-        call(["SZSE.301001"], date(2023, 4, 16), date(2026, 4, 16)),
+        call(["SZSE.301001"], date(2023, 4, 16), date(2026, 4, 14)),
         call(["SHSE.600001", "SZSE.301001"], date(2026, 4, 15), date(2026, 4, 16)),
     ]
+    backfill_call = mock_gateway.fetch_daily_bars.call_args_list[0]
+    incremental_call = mock_gateway.fetch_daily_bars.call_args_list[1]
+    assert backfill_call.args[2] < incremental_call.args[1]
     assert max(
         bar.trade_date
         for bar in mock_repository.upsert_daily_bars.call_args_list[0].args[0]
-    ) == date(2026, 4, 16)
+    ) == date(2026, 4, 14)
     assert max(
         bar.trade_date
         for bar in mock_repository.upsert_daily_bars.call_args_list[1].args[0]

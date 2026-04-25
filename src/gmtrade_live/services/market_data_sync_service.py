@@ -124,9 +124,10 @@ class MarketDataSyncService:
 
         # 6. 有普通增量窗口时，新纳入 symbol 先回补历史，再执行全量增量同步
         if newly_discovered_symbols and not is_first_sync:
+            coexist_backfill_end_date = effective_last_success_date or end_date
             backfill_inserted_rows, _ = self._backfill_new_symbols(
                 newly_discovered_symbols,
-                end_date,
+                coexist_backfill_end_date,
             )
 
         # 7. 批量同步日线数据（按股票分批）
@@ -169,7 +170,7 @@ class MarketDataSyncService:
             return 0, None
         history_start_date = self.gateway.get_trade_date_n_years_ago(self.config.history_years)
         logger.info(
-            "无普通增量窗口，开始回补新纳入 symbol 历史数据",
+            "开始回补新纳入 symbol 历史数据",
             extra={
                 "new_symbol_count": len(symbols),
                 "history_start_date": str(history_start_date),
