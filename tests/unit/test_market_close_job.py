@@ -23,7 +23,7 @@ from gmtrade_live.market_models import (
     ProfitEffectMetrics,
     ToleranceMetrics,
 )
-from gmtrade_live.services.feishu_notification_service import FeishuNotificationService
+from gmtrade_live.services.feishu_notification_service import render_market_close_report_text
 from gmtrade_live.services.market_close_job import run_market_close_job
 
 
@@ -294,22 +294,19 @@ def test_run_market_close_job_reuses_cached_repository_and_hot_stock_resolver(
     assert captured["emotion_repository"] is captured["builder_repository"]
 
 
-def test_feishu_build_message_handles_empty_daily_rows() -> None:
-    service = FeishuNotificationService(FeishuConfig(webhook="https://example.invalid/webhook"))
+def test_render_market_close_report_text_handles_empty_daily_rows() -> None:
     report = MarketCloseReport(
         report_trade_date=date(2026, 4, 21),
         summary="summary",
         daily_rows=[],
     )
 
-    message = service._build_message(report)
+    text = render_market_close_report_text(report)
 
-    assert message["msg_type"] == "text"
-    assert "暂无可展示数据" in message["content"]["text"]
+    assert "暂无可展示数据" in text
 
 
-def test_feishu_build_message_uses_summary_first_and_keeps_trend_lines() -> None:
-    service = FeishuNotificationService(FeishuConfig(webhook="https://example.invalid/webhook"))
+def test_render_market_close_report_text_uses_summary_first_and_keeps_trend_lines() -> None:
     report_date = date(2026, 4, 21)
     report = MarketCloseReport(
         report_trade_date=report_date,
@@ -389,8 +386,7 @@ def test_feishu_build_message_uses_summary_first_and_keeps_trend_lines() -> None
         ),
     )
 
-    message = service._build_message(report)
-    text = message["content"]["text"]
+    text = render_market_close_report_text(report)
 
     assert "一眼结论" in text
     assert "今日核心" in text

@@ -16,6 +16,19 @@ from gmtrade_live.market_models import DailyReportRow, MarketCloseReport
 logger = logging.getLogger(__name__)
 
 
+def render_market_close_report_text(report: MarketCloseReport) -> str:
+    """把盘后报告渲染成飞书纯文本，供发送链路和调试预览共用。"""
+    return _MarketCloseReportRenderer().render_text(report)
+
+
+def build_market_close_report_message(report: MarketCloseReport) -> dict[str, Any]:
+    """把盘后报告包装成飞书 Webhook 消息体。"""
+    return {
+        "msg_type": "text",
+        "content": {"text": render_market_close_report_text(report)},
+    }
+
+
 class FeishuNotificationService:
     """飞书 Webhook 通知服务。"""
 
@@ -48,6 +61,14 @@ class FeishuNotificationService:
 
     def _build_message(self, report: MarketCloseReport) -> dict[str, Any]:
         """构建飞书消息格式（纯文本）。"""
+        return build_market_close_report_message(report)
+
+
+class _MarketCloseReportRenderer:
+    """盘后报告飞书文本渲染器。"""
+
+    def render_text(self, report: MarketCloseReport) -> str:
+        """构建飞书消息格式（纯文本）。"""
         lines = []
 
         # 标题
@@ -57,10 +78,7 @@ class FeishuNotificationService:
         if not report.daily_rows:
             lines.append("最近 10 日趋势")
             lines.append("• 暂无可展示数据（可能尚未完成同步或无有效交易样本）")
-            return {
-                "msg_type": "text",
-                "content": {"text": "\n".join(lines)},
-            }
+            return "\n".join(lines)
 
         # 最新交易日详细指标
         latest_row = report.daily_rows[-1]
@@ -111,10 +129,7 @@ class FeishuNotificationService:
             for flag in report.data_quality_flags:
                 lines.append(f"• {self._normalize_quality_flag(flag)}")
 
-        return {
-            "msg_type": "text",
-            "content": {"text": "\n".join(lines)},
-        }
+        return "\n".join(lines)
 
     def _build_summary_section(self, summary: str, latest_row: DailyReportRow) -> list[str]:
         """构建飞书消息顶部摘要。"""

@@ -62,6 +62,14 @@ conda run -n stock_analysis python tools/debug/check_connectivity.py --config co
 
 # 调试手工交易
 conda run -n stock_analysis python tools/debug/manual_trade.py --config config/sim_account.yaml --side sell --symbol SHSE.600839 --volume 100 --price-type market --timeout-seconds 60
+
+# 预览盘后飞书日报（只打印、不发送、不写 checkpoint）
+conda run -n stock_analysis pytest tests/debug/test_market_close_report_preview.py -s
+
+# 预览指定交易日盘后飞书日报（PowerShell）
+$env:MARKET_CLOSE_REPORT_TRADE_DATE='2026-04-24'
+conda run -n stock_analysis pytest tests/debug/test_market_close_report_preview.py -s
+Remove-Item Env:MARKET_CLOSE_REPORT_TRADE_DATE
 ```
 
 ### 测试
@@ -77,6 +85,9 @@ conda run -n stock_analysis pytest tests/unit/test_config.py::test_load_config_s
 
 # 集成测试（需要掘金终端运行）
 conda run -n stock_analysis pytest tests/integration/
+
+# 显式运行真实环境调试测试
+conda run -n stock_analysis pytest tests/debug/test_market_close_report_preview.py -s
 ```
 
 ### 配置文件
@@ -171,7 +182,8 @@ conda run -n stock_analysis pytest tests/integration/
 ### 单元测试 vs 集成测试
 - **单元测试**（tests/unit/）：不依赖掘金终端，使用 mock
 - **集成测试**（tests/integration/）：需要掘金终端运行，测试真实 API 调用
-- **调试脚本测试**（tests/debug/）：覆盖 `tools/debug` 下的连通性检查与手工交易脚本
+- **调试脚本测试**（tests/debug/）：覆盖连通性检查、手工交易脚本，以及盘后飞书日报预览
+- **真实环境调试测试**：`tests/debug/test_market_close_report_preview.py` 默认不会进入常规 `pytest` 回归；需要显式指定 `tests/debug` 路径才会执行
 - **命名门禁**：`tests/unit/test_stage_name_guard.py` 负责阻止阶段化命名重新回流到活跃文件
 
 ## 常见问题
@@ -187,6 +199,10 @@ conda run -n stock_analysis pytest tests/integration/
 3. **usage: main.py [-h] {trade,scheduler} ...**
    - 原因：未指定子命令或未指定配置文件
    - 解决：`conda run -n stock_analysis python main.py trade --config config/sim_account.yaml`
+
+4. **scheduler --once 没有再次打印或发送飞书日报**
+   - 原因：当日 `market_close_report_sent` checkpoint 已存在，正式调度器会跳过重复生成与发送
+   - 解决：使用 `conda run -n stock_analysis pytest tests/debug/test_market_close_report_preview.py -s` 预览飞书文本；该入口只打印，不发送 webhook，也不写 checkpoint
 
 ## 文档参考
 
