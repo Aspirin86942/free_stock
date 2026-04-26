@@ -1,6 +1,6 @@
 # 东方财富掘金实盘执行系统（free_stock）
 
-> 面向协作者的仓库上手入口。第一次进入仓库先看这里，开始开发前再看 [CONTRIBUTING.md](CONTRIBUTING.md)。
+> 面向协作者的仓库上手入口。第一次进入仓库先看这里；开始开发前请查阅仓库协作规范文档（`CONTRIBUTING.md`，若当前分支尚未提供请先向维护者确认）。
 
 ## 项目概览
 
@@ -92,7 +92,7 @@ conda run -n stock_analysis python tools/debug/manual_trade.py --config config/s
 ```text
 src/gmtrade_live/          核心业务代码
 tests/unit/                默认单元测试
-tests/integration/         依赖掘金终端的集成测试
+tests/integration/         跨模块集成测试
 tests/debug/               显式运行的真实环境调试测试
 tools/debug/               手工排障脚本
 config/                    配置示例与本地配置入口
@@ -101,13 +101,15 @@ docs/                      运行说明、设计 spec、实现 plan
 
 ## 协作流程摘要
 
+以下为目标协作约定（启用前提：由维护者先创建并维护 `dev` 分支）：
+
 1. 从最新 `dev` 创建 `feature/*`、`fix/*`、`docs/*` 或 `refactor/*`
 2. 在功能分支完成代码、测试和文档同步
 3. 提 PR 回 `dev`
 4. 合并方式统一使用 `Squash and merge`
 5. `dev` 稳定后，再由维护者发起 `dev -> main` 的 PR
 
-完整协作规则见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+完整协作规则以仓库协作规范文档（`CONTRIBUTING.md`）为准；若当前快照尚未提供该文件，请先按维护者通知执行。
 
 ## 文档索引
 
@@ -120,6 +122,6 @@ docs/                      运行说明、设计 spec、实现 plan
 ## 注意事项
 
 - 默认 conda 环境统一写 `stock_analysis`，不要在公共文档里混用其他环境名
-- `main` 不是日常开发分支，日常协作统一走 `dev -> feature/* -> PR -> dev`
+- `main` 不是日常开发分支；若仓库已启用 `dev`，日常协作按 `dev -> feature/* -> PR -> dev` 执行
 - 真实环境命令执行前，先确认它会不会发单、写数据库或发送飞书消息
 - 修改命令、配置、流程或外部依赖口径时，记得同步更新文档
