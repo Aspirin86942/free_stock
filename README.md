@@ -29,7 +29,7 @@
 > 注意：
 > - `config/sim_account.yaml` 是本地私有配置，不可提交
 > - `gm.token`、MySQL 密码、飞书 webhook 不要出现在 PR、issue、截图或录屏里
-> - `tests/debug/` 是显式运行的真实环境调试入口，不属于默认 `pytest` 回归门禁
+> - `tests/debug/` 包含调试相关测试；其中带 `real_env_debug` 标记的用例默认不会进入常规 `pytest` 回归，需显式指定 `tests/debug` 路径运行
 
 ## 快速开始
 
@@ -93,7 +93,7 @@ conda run -n stock_analysis python tools/debug/manual_trade.py --config config/s
 src/gmtrade_live/          核心业务代码
 tests/unit/                默认单元测试
 tests/integration/         跨模块集成测试
-tests/debug/               显式运行的真实环境调试测试
+tests/debug/               调试相关测试目录（带 `real_env_debug` 标记的用例默认不进入常规 pytest 回归）
 tools/debug/               手工排障脚本
 config/                    配置示例与本地配置入口
 docs/                      运行说明、设计 spec、实现 plan
