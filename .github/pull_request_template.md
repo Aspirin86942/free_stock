@@ -17,7 +17,8 @@
 ## 验证方式
 
 - 已运行：
-  - `填写本次实际运行的命令，例如 conda run -n stock_analysis pytest tests/unit/test_config.py -q`
+  - 命令：`填写本次实际运行的命令，例如 conda run -n stock_analysis pytest tests/unit/test_config.py -q`
+  - 结果：`填写关键结果，例如 210 passed, 1 skipped；若失败请写明失败摘要`
 - 未运行项及原因：
   - `如无可写：无；如有跳过项，明确写原因`
 
@@ -25,6 +26,7 @@
 
 - [ ] 无
 - [ ] 有，说明如下：
+  - `只说明影响，不要粘贴真实 token、密码、webhook 或其他敏感配置`
   - `config/sim_account.yaml` 结构或示例配置是否受影响
   - MySQL schema / checkpoint / 回补逻辑是否受影响
   - 掘金终端 / GM API / 飞书 webhook / MySQL 连接是否受影响
