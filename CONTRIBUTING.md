@@ -107,8 +107,8 @@ git push -u origin feature/market-close-summary
 - 真实环境相关改动：
   - 在 PR 里写清你实际跑了哪些命令、依赖哪些外部系统、结果是什么
 - `tests/debug/`：
-  - 只在显式调试或排障时运行
-  - 不把它当成默认 `pytest` 主链的一部分
+  - 包含调试相关测试
+  - 其中带 `real_env_debug` 标记的用例默认不会进入常规 `pytest` 回归；需要显式指定 `tests/debug` 路径时再运行
 
 ## 文档同步规则
 
